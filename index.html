@@ -4,7 +4,208 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SEI DIGITAL COE — SPAEI/COE-PMERJ</title>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js">
+// ========================================
+// DASHBOARD PREMIUM — KPI DRAWER
+// ========================================
+let _kpiCurrentType=null;
+let _kpiAllProcessos=[];
+
+const KPI_CFG={
+  total:{
+    title:'Total de Processos',subtitle:'Todos os processos cadastrados no sistema',
+    icon:'<i class="fas fa-folder-open"></i>',color:'var(--cyan)',bg:'rgba(6,182,212,0.15)',
+    filter:()=>Object.values(STATE.processos),
+  },
+  andamento:{
+    title:'Em Andamento',subtitle:'Processos com status Em Andamento',
+    icon:'<i class="fas fa-spinner"></i>',color:'var(--emerald)',bg:'rgba(16,185,129,0.15)',
+    filter:()=>Object.values(STATE.processos).filter(p=>p.status==='Em Andamento'),
+  },
+  aguardando:{
+    title:'Aguardando',subtitle:'Processos pendentes de ação ou retorno',
+    icon:'<i class="fas fa-clock"></i>',color:'var(--amber)',bg:'rgba(245,158,11,0.15)',
+    filter:()=>Object.values(STATE.processos).filter(p=>p.status==='Aguardando'),
+  },
+  critico:{
+    title:'Urgência Crítica',subtitle:'Processos com prioridade máxima de atenção',
+    icon:'<i class="fas fa-triangle-exclamation"></i>',color:'var(--red)',bg:'rgba(239,68,68,0.15)',
+    filter:()=>Object.values(STATE.processos).filter(p=>p.urgencia==='Crítica'),
+  },
+  prazo:{
+    title:'Prazo em 7 dias',subtitle:'Processos com prazo vencendo nos próximos 7 dias',
+    icon:'<i class="fas fa-calendar-xmark"></i>',color:'#8B5CF6',bg:'rgba(139,92,246,0.15)',
+    filter:()=>{
+      const hoje=new Date(); hoje.setHours(0,0,0,0);
+      const em7=new Date(hoje); em7.setDate(em7.getDate()+7);
+      return Object.values(STATE.processos).filter(p=>{
+        if(!p.prazo) return false;
+        const d=new Date(p.prazo+'T00:00:00');
+        return d>=hoje && d<=em7 && !['Finalizado','Cancelado','Encerrado','Baixado'].includes(p.status);
+      }).sort((a,b)=>a.prazo.localeCompare(b.prazo));
+    },
+  },
+  spaei:{
+    title:'Enviados ao SPAEI',subtitle:'Processos sincronizados com o SPAEI DIGITAL',
+    icon:'<i class="fas fa-link"></i>',color:'var(--gold)',bg:'var(--gold-pale)',
+    filter:()=>Object.values(STATE.processos).filter(p=>p.spaeiSync),
+  },
+};
+
+function openKpiDrawer(type){
+  const cfg=KPI_CFG[type]; if(!cfg) return;
+  _kpiCurrentType=type;
+
+  // Header
+  const iconEl=document.getElementById('kpi-drawer-icon');
+  iconEl.style.background=cfg.bg; iconEl.style.color=cfg.color; iconEl.innerHTML=cfg.icon;
+  document.getElementById('kpi-drawer-title-text').textContent=cfg.title;
+  document.getElementById('kpi-drawer-subtitle').textContent=cfg.subtitle;
+  document.getElementById('kpi-drawer-search-input').value='';
+
+  // Dados
+  _kpiAllProcessos=cfg.filter();
+  document.getElementById('kpi-drawer-count').textContent=_kpiAllProcessos.length;
+
+  // Pills
+  _renderKpiPills(type,_kpiAllProcessos);
+
+  // Skeleton
+  document.getElementById('kpi-drawer-content').innerHTML=[1,2,3,4].map(()=>`
+    <div style="padding:11px 13px;background:rgba(5,14,31,0.3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);margin-bottom:7px">
+      <div class="skel" style="height:9px;width:38%;margin-bottom:7px"></div>
+      <div class="skel" style="height:11px;width:78%;margin-bottom:7px"></div>
+      <div style="display:flex;gap:5px">
+        <div class="skel" style="height:17px;width:55px;border-radius:9px"></div>
+        <div class="skel" style="height:17px;width:70px;border-radius:9px"></div>
+      </div>
+    </div>`).join('');
+
+  // Abrir
+  document.getElementById('kpi-drawer-overlay').classList.add('open');
+  document.getElementById('kpi-drawer').classList.add('open');
+  setTimeout(()=>_renderKpiContent(_kpiAllProcessos),220);
+}
+
+function closeKpiDrawer(){
+  document.getElementById('kpi-drawer-overlay').classList.remove('open');
+  document.getElementById('kpi-drawer').classList.remove('open');
+  _kpiCurrentType=null;
+}
+
+function filterDrawerContent(){
+  if(!_kpiCurrentType) return;
+  const q=document.getElementById('kpi-drawer-search-input').value.toLowerCase().trim();
+  const filtered=q
+    ? _kpiAllProcessos.filter(p=>
+        (p.numero||'').toLowerCase().includes(q)||
+        (p.descricao||'').toLowerCase().includes(q)||
+        (p.responsaveis||[]).join(' ').toLowerCase().includes(q)||
+        (p.unidade||'').toLowerCase().includes(q)||
+        (p.observacoes||'').toLowerCase().includes(q)
+      )
+    : _kpiAllProcessos;
+  document.getElementById('kpi-drawer-count').textContent=filtered.length;
+  _renderKpiContent(filtered);
+}
+
+function _renderKpiPills(type,procs){
+  const el=document.getElementById('kpi-drawer-pills');
+  const pills=[];
+  if(type==='total'){
+    const counts={andamento:0,aguardando:0,finalizado:0,critico:0};
+    procs.forEach(p=>{
+      if(p.status==='Em Andamento') counts.andamento++;
+      if(p.status==='Aguardando') counts.aguardando++;
+      if(['Finalizado','Encerrado','Baixado'].includes(p.status)) counts.finalizado++;
+      if(p.urgencia==='Crítica') counts.critico++;
+    });
+    pills.push(
+      `<span class="kpi-pill" style="background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.3);color:var(--emerald)">${counts.andamento} Em Andamento</span>`,
+      `<span class="kpi-pill" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:var(--amber)">${counts.aguardando} Aguardando</span>`,
+      `<span class="kpi-pill" style="background:rgba(6,182,212,.1);border-color:rgba(6,182,212,.2);color:var(--cyan)">${counts.finalizado} Concluídos</span>`,
+      `<span class="kpi-pill" style="background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:var(--red)">${counts.critico} Críticos</span>`
+    );
+  } else if(type==='critico'){
+    const unc={};
+    procs.forEach(p=>{const u=p.unidade||'—';unc[u]=(unc[u]||0)+1});
+    Object.entries(unc).sort((a,b)=>b[1]-a[1]).slice(0,4).forEach(([u,c])=>
+      pills.push(`<span class="kpi-pill" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.2);color:#F87171">${u}: ${c}</span>`)
+    );
+  } else if(type==='prazo'){
+    const hoje=new Date(); hoje.setHours(0,0,0,0);
+    const venc=procs.filter(p=>new Date(p.prazo+'T00:00:00')<hoje).length;
+    const urg3=procs.filter(p=>{const d=new Date(p.prazo+'T00:00:00');return d>=hoje&&Math.ceil((d-hoje)/86400000)<=3;}).length;
+    if(venc>0) pills.push(`<span class="kpi-pill" style="background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:var(--red)">${venc} Vencidos</span>`);
+    if(urg3>0) pills.push(`<span class="kpi-pill" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:var(--amber)">${urg3} Vencem em ≤3d</span>`);
+    pills.push(`<span class="kpi-pill" style="background:rgba(139,92,246,.15);border-color:rgba(139,92,246,.3);color:#A78BFA">${procs.length} total no período</span>`);
+  } else if(type==='spaei'){
+    const last=procs.reduce((a,b)=>Math.max(a,b.spaeiSyncAt||0),0);
+    if(last) pills.push(`<span class="kpi-pill" style="background:rgba(200,153,26,.1);border-color:rgba(200,153,26,.2);color:var(--gold)"><i class="fas fa-clock" style="font-size:.55rem"></i> ${new Date(last).toLocaleTimeString('pt-BR')}</span>`);
+    const unc={};
+    procs.forEach(p=>{const u=p.unidade||'—';unc[u]=(unc[u]||0)+1});
+    Object.entries(unc).sort((a,b)=>b[1]-a[1]).slice(0,3).forEach(([u,c])=>
+      pills.push(`<span class="kpi-pill" style="background:rgba(200,153,26,.08);border-color:rgba(200,153,26,.2);color:var(--gold)">${u}: ${c}</span>`)
+    );
+  } else if(type==='andamento'){
+    const urg={};
+    procs.forEach(p=>{const u=p.urgencia||'Normal';urg[u]=(urg[u]||0)+1});
+    ['Alta','Crítica'].forEach(k=>{if(urg[k]) pills.push(`<span class="kpi-pill" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:var(--amber)">${k}: ${urg[k]}</span>`)});
+  }
+  el.innerHTML=pills.join('')||'<span style="font-size:.68rem;color:var(--text-dim)">— sem resumo adicional</span>';
+}
+
+function _renderKpiContent(procs){
+  const content=document.getElementById('kpi-drawer-content');
+  if(!procs||procs.length===0){
+    content.innerHTML='<div class="drawer-empty"><i class="fas fa-inbox"></i><p>Nenhum processo encontrado.</p></div>';
+    return;
+  }
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  content.innerHTML=procs.map(proc=>{
+    // Localizar ID real
+    const procId=Object.entries(STATE.processos).find(([,v])=>v.numero===proc.numero&&v.descricao===proc.descricao)?.[0]||'';
+    let prazoHtml='';
+    if(proc.prazo){
+      const d=new Date(proc.prazo+'T00:00:00');
+      const diff=Math.ceil((d-hoje)/86400000);
+      const cls=diff<0?'vencido':diff<=3?'urgente':'ok';
+      const lbl=diff<0?'VENC':diff===0?'HOJE':diff+'d';
+      prazoHtml=`<span class="prazo-dias-badge ${cls}" style="padding:2px 7px;font-size:.6rem;border-radius:4px">${lbl}</span>`;
+    }
+    const respHtml=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${r}</span>`).join('');
+    const unBadge=proc.unidade?`<span class="badge badge-normal" style="font-size:.58rem">${proc.unidade}</span>`:'';
+    const spaeiIco=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sync SPAEI"></i>`:'';
+    const critIco=proc.urgencia==='Crítica'?`<i class="fas fa-fire" style="color:var(--red);font-size:.65rem"></i>`:'';
+    return `<div class="kpi-proc-item" onclick="fecharKpiAbrirModal('${procId}')">
+      <div class="kpi-proc-numero">${proc.numero||'—'}</div>
+      <div class="kpi-proc-desc">${proc.descricao||'—'}</div>
+      <div class="kpi-proc-meta">
+        ${unBadge}${getStatusBadge(proc.status)}${prazoHtml}${spaeiIco}${critIco}
+        <div style="flex:1"></div>
+        <div class="resp-list" style="max-width:none">${respHtml}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function fecharKpiAbrirModal(id){
+  if(!id) return;
+  closeKpiDrawer();
+  setTimeout(()=>abrirModalEditar(id),150);
+}
+
+function updateDashDate(){
+  const el=document.getElementById('dash-date-display');
+  if(el) el.textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+}
+
+// Fechar drawer com ESC (além dos modais)
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&_kpiCurrentType) closeKpiDrawer();
+});
+
+</script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -730,6 +931,237 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
   .topbar-clock{display:none}
   .spaei-stat-row{grid-template-columns:1fr}
 }
+
+/* ========================================
+   DASHBOARD PREMIUM — KPI CARDS & DRAWER
+   ======================================== */
+
+/* Cards interativos */
+.kpi-clickable{cursor:pointer;position:relative;user-select:none}
+.kpi-click-hint{
+  position:absolute;top:10px;right:10px;
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(255,255,255,0.06);
+  display:flex;align-items:center;justify-content:center;
+  font-size:.6rem;color:var(--text-dim);
+  opacity:0;transition:opacity .2s,background .2s;
+}
+.kpi-clickable:hover .kpi-click-hint{opacity:1;background:rgba(200,153,26,0.15);color:var(--gold)}
+.kpi-clickable:hover{
+  transform:translateY(-3px) scale(1.01);
+  border-color:rgba(200,153,26,0.35)!important;
+  box-shadow:0 14px 40px rgba(0,0,0,0.45),0 0 0 1px rgba(200,153,26,0.12);
+}
+.kpi-clickable:active{transform:translateY(-1px) scale(1.005)}
+.kpi-trend{
+  font-size:.62rem;color:var(--text-dim);
+  margin-top:7px;letter-spacing:.3px;
+  transition:color .2s;display:flex;align-items:center;gap:4px;
+}
+.kpi-clickable:hover .kpi-trend{color:var(--gold)}
+.kpi-alert-pulse{color:rgba(239,68,68,0.75)!important;animation:kpi-pulse-txt 2s ease-in-out infinite}
+@keyframes kpi-pulse-txt{0%,100%{opacity:1}50%{opacity:.45}}
+
+/* Stat card pulsing border for critical */
+.stat-card.critico.kpi-clickable{
+  animation:critico-glow 3s ease-in-out infinite;
+}
+@keyframes critico-glow{
+  0%,100%{box-shadow:none}
+  50%{box-shadow:0 0 16px rgba(239,68,68,0.18)}
+}
+
+/* Dashboard header */
+.dash-header{
+  display:flex;align-items:flex-start;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;margin-bottom:2px;
+}
+.dash-subtitle{font-size:.7rem;color:var(--text-dim);margin-top:3px;letter-spacing:.3px}
+
+/* Dashboard analytics grid */
+.dash-analytics-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:16px;
+}
+.dash-panel{
+  background:var(--surface);backdrop-filter:blur(10px);
+  border:1px solid var(--border-subtle);border-radius:var(--radius);
+  overflow:hidden;
+}
+.dash-panel-full{grid-column:1/-1}
+.dash-panel-header{
+  padding:12px 18px;
+  background:rgba(5,14,31,0.45);
+  border-bottom:1px solid var(--border-subtle);
+  font-size:.7rem;font-weight:700;color:var(--gold);
+  letter-spacing:1.2px;text-transform:uppercase;
+  display:flex;align-items:center;gap:8px;
+}
+.dash-panel-body{padding:16px;max-height:260px;overflow-y:auto}
+.dash-panel-body::-webkit-scrollbar{width:3px}
+.dash-panel-body::-webkit-scrollbar-thumb{background:var(--navy-400);border-radius:2px}
+
+/* Distribuição bars */
+.dist-bar-row{
+  display:flex;align-items:center;gap:10px;
+  margin-bottom:9px;padding:6px 8px;
+  border-radius:var(--radius-sm);transition:background .15s;
+}
+.dist-bar-row:hover{background:rgba(255,255,255,0.03)}
+.dist-bar-label{
+  font-size:.75rem;font-weight:600;color:var(--text);
+  min-width:90px;max-width:130px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  flex-shrink:0;
+}
+.dist-bar-track{
+  flex:1;height:5px;
+  background:rgba(255,255,255,0.06);
+  border-radius:3px;overflow:hidden;
+}
+.dist-bar-fill{height:100%;border-radius:3px;transition:width .6s cubic-bezier(.16,1,.3,1)}
+.dist-bar-count{
+  font-family:'JetBrains Mono',monospace;
+  font-size:.72rem;font-weight:700;color:var(--gold);
+  min-width:22px;text-align:right;flex-shrink:0;
+}
+
+/* Prazo rows */
+.prazo-row{
+  display:flex;align-items:center;gap:12px;
+  padding:9px 12px;border-radius:var(--radius-sm);margin-bottom:6px;
+  border:1px solid var(--border-subtle);
+  background:rgba(5,14,31,0.2);transition:background .15s;
+}
+.prazo-row:hover{background:rgba(35,77,142,0.15)}
+.prazo-dias-badge{
+  font-family:'JetBrains Mono',monospace;font-size:.78rem;font-weight:800;
+  min-width:62px;text-align:center;padding:3px 6px;border-radius:5px;
+  flex-shrink:0;
+}
+.prazo-dias-badge.vencido{background:rgba(239,68,68,0.15);color:var(--red)}
+.prazo-dias-badge.urgente{background:rgba(245,158,11,0.15);color:var(--amber)}
+.prazo-dias-badge.ok{background:rgba(16,185,129,0.1);color:var(--emerald)}
+
+/* ===== KPI DRAWER ===== */
+.kpi-drawer-overlay{
+  position:fixed;inset:0;
+  background:rgba(5,14,31,0.72);
+  backdrop-filter:blur(5px);
+  z-index:800;
+  opacity:0;visibility:hidden;
+  transition:opacity .28s,visibility .28s;
+}
+.kpi-drawer-overlay.open{opacity:1;visibility:visible}
+
+.kpi-drawer{
+  position:fixed;top:0;right:0;
+  width:min(540px,96vw);height:100vh;
+  background:linear-gradient(180deg,var(--navy-600) 0%,var(--navy-700) 100%);
+  border-left:1px solid var(--border);
+  box-shadow:-10px 0 50px rgba(0,0,0,0.65);
+  z-index:801;
+  transform:translateX(100%);
+  transition:transform .3s cubic-bezier(.16,1,.3,1);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.kpi-drawer.open{transform:translateX(0)}
+.kpi-drawer::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);
+}
+
+.kpi-drawer-header{
+  padding:18px 20px 14px;
+  border-bottom:1px solid var(--border-subtle);
+  display:flex;align-items:center;gap:12px;flex-shrink:0;
+}
+.kpi-drawer-icon{
+  width:40px;height:40px;border-radius:var(--radius-sm);
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.1rem;flex-shrink:0;
+}
+.kpi-drawer-title-wrap{flex:1;min-width:0}
+.kpi-drawer-title-wrap h3{font-size:.9rem;font-weight:700;color:var(--text);margin:0}
+.kpi-drawer-title-wrap span{font-size:.65rem;color:var(--text-dim);letter-spacing:.3px}
+.kpi-drawer-count{
+  font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;
+  background:var(--gold-pale);border:1px solid var(--gold);color:var(--gold);
+  padding:2px 10px;border-radius:10px;white-space:nowrap;flex-shrink:0;
+}
+.kpi-drawer-close{
+  width:30px;height:30px;border-radius:50%;
+  background:rgba(255,255,255,0.05);border:none;
+  color:var(--text-muted);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:.15s;font-size:.85rem;flex-shrink:0;
+}
+.kpi-drawer-close:hover{background:rgba(239,68,68,0.2);color:var(--red)}
+
+.kpi-drawer-pills{
+  display:flex;gap:7px;flex-wrap:wrap;
+  padding:10px 20px;border-bottom:1px solid var(--border-subtle);flex-shrink:0;
+  min-height:40px;align-items:center;
+}
+.kpi-pill{
+  padding:3px 10px;border-radius:20px;
+  font-size:.66rem;font-weight:700;border:1px solid;
+  white-space:nowrap;
+}
+
+.kpi-drawer-search{
+  padding:10px 20px;border-bottom:1px solid var(--border-subtle);flex-shrink:0;
+}
+.kpi-search-box{
+  display:flex;align-items:center;gap:9px;
+  background:rgba(5,14,31,0.5);
+  border:1px solid var(--border-subtle);border-radius:var(--radius-sm);
+  padding:8px 12px;transition:border-color .2s;
+}
+.kpi-search-box:focus-within{border-color:var(--gold)}
+.kpi-search-box i{color:var(--text-dim);font-size:.78rem;flex-shrink:0}
+.kpi-search-box input{
+  background:none;border:none;outline:none;
+  color:var(--text);font-size:.82rem;font-family:'Inter',sans-serif;flex:1;
+}
+.kpi-search-box input::placeholder{color:var(--text-dim)}
+
+.kpi-drawer-content{
+  flex:1;overflow-y:auto;padding:14px 20px;
+}
+.kpi-drawer-content::-webkit-scrollbar{width:4px}
+.kpi-drawer-content::-webkit-scrollbar-thumb{background:var(--navy-400);border-radius:2px}
+
+.kpi-proc-item{
+  padding:11px 13px;
+  background:rgba(5,14,31,0.3);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-sm);margin-bottom:7px;
+  transition:background .15s,border-color .15s;cursor:pointer;
+}
+.kpi-proc-item:hover{background:rgba(35,77,142,0.18);border-color:var(--border)}
+.kpi-proc-numero{font-family:'JetBrains Mono',monospace;font-size:.68rem;color:var(--cyan);font-weight:600;margin-bottom:3px}
+.kpi-proc-desc{font-size:.8rem;font-weight:600;color:var(--text);margin-bottom:6px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.kpi-proc-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.kpi-proc-meta .resp-pill{font-size:.6rem}
+
+/* Skeleton loading */
+.skel{
+  background:linear-gradient(90deg,rgba(255,255,255,0.04) 25%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 75%);
+  background-size:200% 100%;animation:skel-wave 1.4s ease-in-out infinite;border-radius:4px;
+}
+@keyframes skel-wave{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+.drawer-empty{text-align:center;padding:36px 16px;color:var(--text-dim)}
+.drawer-empty i{font-size:2.4rem;margin-bottom:10px;color:var(--navy-400);display:block}
+.drawer-empty p{font-size:.78rem;color:var(--text-muted)}
+
+/* Responsive */
+@media(max-width:768px){
+  .kpi-drawer{width:100vw}
+  .dash-analytics-grid{grid-template-columns:1fr}
+  .dash-panel-full{grid-column:1}
+}
+
 </style>
 </head>
 <body>
@@ -1029,40 +1461,82 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
 
       <!-- VIEW: DASHBOARD -->
       <div class="view" id="view-dashboard">
-        <div class="section-label"><i class="fas fa-chart-bar"></i> Dashboard Analítico</div>
+        <!-- Header -->
+        <div class="dash-header">
+          <div>
+            <div class="section-label" style="margin-bottom:2px"><i class="fas fa-chart-bar"></i> Dashboard Analítico</div>
+            <div class="dash-subtitle">SEI DIGITAL COE · Processos em tempo real · <span id="dash-date-display"></span></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="renderDashboard();showToast('Dashboard atualizado','success')" style="flex-shrink:0">
+            <i class="fas fa-sync-alt"></i> Atualizar
+          </button>
+        </div>
+
+        <!-- KPI Cards — 6 indicadores interativos -->
         <div class="stats-row">
-          <div class="stat-card total">
+          <div class="stat-card total kpi-clickable" onclick="openKpiDrawer('total')">
+            <div class="kpi-click-hint"><i class="fas fa-expand-alt"></i></div>
             <div class="stat-icon"><i class="fas fa-folder-open"></i></div>
             <div class="stat-value" id="d-total">0</div>
             <div class="stat-label">Total de Processos</div>
+            <div class="kpi-trend"><i class="fas fa-mouse-pointer"></i> Ver todos</div>
           </div>
-          <div class="stat-card andamento">
+          <div class="stat-card andamento kpi-clickable" onclick="openKpiDrawer('andamento')">
+            <div class="kpi-click-hint"><i class="fas fa-expand-alt"></i></div>
             <div class="stat-icon"><i class="fas fa-spinner"></i></div>
             <div class="stat-value" id="d-andamento">0</div>
             <div class="stat-label">Em Andamento</div>
+            <div class="kpi-trend"><i class="fas fa-mouse-pointer"></i> Ver lista</div>
           </div>
-          <div class="stat-card aguardando">
+          <div class="stat-card aguardando kpi-clickable" onclick="openKpiDrawer('aguardando')">
+            <div class="kpi-click-hint"><i class="fas fa-expand-alt"></i></div>
             <div class="stat-icon"><i class="fas fa-clock"></i></div>
             <div class="stat-value" id="d-aguardando">0</div>
             <div class="stat-label">Aguardando</div>
+            <div class="kpi-trend"><i class="fas fa-mouse-pointer"></i> Ver lista</div>
           </div>
-          <div class="stat-card critico">
+          <div class="stat-card critico kpi-clickable" onclick="openKpiDrawer('critico')">
+            <div class="kpi-click-hint"><i class="fas fa-expand-alt"></i></div>
             <div class="stat-icon"><i class="fas fa-triangle-exclamation"></i></div>
             <div class="stat-value" id="d-critico">0</div>
             <div class="stat-label">Urgência Crítica</div>
+            <div class="kpi-trend kpi-alert-pulse"><i class="fas fa-exclamation-circle"></i> Requer atenção</div>
+          </div>
+          <div class="stat-card prazo kpi-clickable" onclick="openKpiDrawer('prazo')">
+            <div class="kpi-click-hint"><i class="fas fa-expand-alt"></i></div>
+            <div class="stat-icon"><i class="fas fa-calendar-xmark"></i></div>
+            <div class="stat-value" id="d-prazo">0</div>
+            <div class="stat-label">Prazo em 7 dias</div>
+            <div class="kpi-trend"><i class="fas fa-mouse-pointer"></i> Ver detalhes</div>
+          </div>
+          <div class="stat-card spaei kpi-clickable" onclick="openKpiDrawer('spaei')">
+            <div class="kpi-click-hint"><i class="fas fa-expand-alt"></i></div>
+            <div class="stat-icon"><i class="fas fa-link"></i></div>
+            <div class="stat-value" id="d-spaei">0</div>
+            <div class="stat-label">Enviados ao SPAEI</div>
+            <div class="kpi-trend"><i class="fas fa-mouse-pointer"></i> Ver sincronizados</div>
           </div>
         </div>
-        <div style="margin-top:20px">
-          <div class="section-label"><i class="fas fa-users"></i> Distribuição por Responsável</div>
-          <div id="dash-resp" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px"></div>
+
+        <!-- Analytics Grid -->
+        <div class="dash-analytics-grid">
+          <div class="dash-panel">
+            <div class="dash-panel-header"><i class="fas fa-users"></i> Distribuição por Responsável</div>
+            <div class="dash-panel-body" id="dash-resp"></div>
+          </div>
+          <div class="dash-panel">
+            <div class="dash-panel-header"><i class="fas fa-building"></i> Distribuição por Unidade</div>
+            <div class="dash-panel-body" id="dash-unidade"></div>
+          </div>
         </div>
-        <div>
-          <div class="section-label"><i class="fas fa-building"></i> Distribuição por Unidade</div>
-          <div id="dash-unidade" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px"></div>
-        </div>
-        <div>
-          <div class="section-label"><i class="fas fa-exclamation-triangle"></i> Processos com Prazo Próximo (próximos 15 dias)</div>
-          <div id="dash-prazos"></div>
+
+        <!-- Prazos -->
+        <div class="dash-panel dash-panel-full">
+          <div class="dash-panel-header">
+            <i class="fas fa-exclamation-triangle"></i> Processos com Prazo Próximo
+            <span style="font-size:.6rem;font-weight:400;color:var(--text-dim);margin-left:4px">(próximos 15 dias)</span>
+          </div>
+          <div class="dash-panel-body" style="max-height:320px" id="dash-prazos"></div>
         </div>
       </div>
 
@@ -1866,30 +2340,66 @@ function renderDashboard(){
     if(el) el.textContent=[total,andamento,aguardando,critico][i];
   });
 
-  // Por responsável
+  // Novos KPIs: prazo 7d e SPAEI
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const em7=new Date(hoje); em7.setDate(em7.getDate()+7);
+  const prazo7=p.filter(x=>{
+    if(!x.prazo) return false;
+    const d=new Date(x.prazo+'T00:00:00');
+    return d>=hoje && d<=em7 && !['Finalizado','Cancelado','Encerrado','Baixado'].includes(x.status);
+  }).length;
+  const spaeiSync=p.filter(x=>x.spaeiSync).length;
+  const dPrazo=document.getElementById('d-prazo'); if(dPrazo) dPrazo.textContent=prazo7;
+  const dSpaei=document.getElementById('d-spaei'); if(dSpaei) dSpaei.textContent=spaeiSync;
+
+  // Atualizar data
+  updateDashDate();
+
+  // Por responsável — barra visual
   const respCount={};
   p.forEach(proc=>(proc.responsaveis||[]).forEach(r=>{respCount[r]=(respCount[r]||0)+1}));
+  const respEntries=Object.entries(respCount).sort((a,b)=>b[1]-a[1]);
+  const maxResp=respEntries[0]?.[1]||1;
   const dr=document.getElementById('dash-resp');
-  if(dr) dr.innerHTML=Object.entries(respCount).sort((a,b)=>b[1]-a[1]).map(([nome,cnt])=>`
-    <div style="background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 16px;display:flex;align-items:center;gap:10px;min-width:150px">
-      <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--navy-400),var(--navy-500));display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:var(--gold);border:1px solid var(--gold)">${nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||'?'}</div>
-      <div><div style="font-size:.82rem;font-weight:600">${nome}</div><div style="font-size:.7rem;color:var(--gold)">${cnt} processo${cnt>1?'s':''}</div></div>
-    </div>
-  `).join('')||'<div style="color:var(--text-dim);font-size:.8rem">Nenhum responsável atribuído</div>';
+  if(dr){
+    if(!respEntries.length){dr.innerHTML='<div style="color:var(--text-dim);font-size:.78rem;padding:4px 0">Nenhum responsável atribuído</div>';
+    }else{
+      dr.innerHTML=respEntries.map(([nome,cnt])=>{
+        const pct=Math.round((cnt/maxResp)*100);
+        const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
+        return `<div class="dist-bar-row">
+          <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--navy-400),var(--navy-500));display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;color:var(--gold);border:1px solid var(--gold);flex-shrink:0">${init}</div>
+          <div class="dist-bar-label" title="${nome}">${nome}</div>
+          <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:linear-gradient(90deg,var(--cyan),var(--navy-400))"></div></div>
+          <div class="dist-bar-count">${cnt}</div>
+        </div>`;
+      }).join('');
+    }
+  }
 
-  // Por unidade
+  // Por unidade — barra visual
   const unCount={};
   p.forEach(proc=>{const u=proc.unidade||'Outros';unCount[u]=(unCount[u]||0)+1});
+  const unEntries=Object.entries(unCount).sort((a,b)=>b[1]-a[1]);
+  const maxUn=unEntries[0]?.[1]||1;
+  const UNIT_COLORS={'COE':'var(--gold)','BOPE':'var(--red)','BPCHQ':'var(--emerald)','BTM':'var(--amber)','GAM':'var(--cyan)','BAC':'#8B5CF6','CIESPP':'#EC4899'};
   const du=document.getElementById('dash-unidade');
-  if(du) du.innerHTML=Object.entries(unCount).sort((a,b)=>b[1]-a[1]).map(([un,cnt])=>`
-    <div style="background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 16px;display:inline-flex;align-items:center;gap:8px">
-      <span class="badge badge-normal" style="font-size:.65rem">${un}</span>
-      <span style="font-size:.82rem;font-weight:700;color:var(--gold)">${cnt}</span>
-    </div>
-  `).join('')||'<div style="color:var(--text-dim);font-size:.8rem">Sem dados</div>';
+  if(du){
+    if(!unEntries.length){du.innerHTML='<div style="color:var(--text-dim);font-size:.78rem;padding:4px 0">Sem dados</div>';
+    }else{
+      du.innerHTML=unEntries.map(([un,cnt])=>{
+        const pct=Math.round((cnt/maxUn)*100);
+        const cor=UNIT_COLORS[un]||'var(--gold)';
+        return `<div class="dist-bar-row">
+          <div class="dist-bar-label">${un}</div>
+          <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${cor}"></div></div>
+          <div class="dist-bar-count">${cnt}</div>
+        </div>`;
+      }).join('');
+    }
+  }
 
-  // Prazos próximos
-  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  // Prazos próximos — visual premium
   const em15=new Date(hoje); em15.setDate(em15.getDate()+15);
   const comPrazo=p.filter(x=>{
     if(!x.prazo||['Finalizado','Cancelado','Encerrado','Baixado'].includes(x.status)) return false;
@@ -1898,15 +2408,23 @@ function renderDashboard(){
   }).sort((a,b)=>a.prazo.localeCompare(b.prazo));
   const dp=document.getElementById('dash-prazos');
   if(dp){
-    if(comPrazo.length===0){dp.innerHTML='<div style="color:var(--text-dim);font-size:.8rem;padding:12px">Nenhum processo com prazo nos próximos 15 dias.</div>';return;}
+    if(comPrazo.length===0){
+      dp.innerHTML='<div style="color:var(--text-dim);font-size:.78rem;padding:8px 0;text-align:center"><i class="fas fa-check-circle" style="color:var(--emerald);margin-right:6px"></i>Nenhum processo com prazo nos próximos 15 dias.</div>';
+      return;
+    }
     dp.innerHTML=comPrazo.map(proc=>{
       const d=new Date(proc.prazo+'T00:00:00');
       const diff=Math.ceil((d-hoje)/(1000*60*60*24));
-      const cls=diff<0?'prazo-vencido':diff<=3?'prazo-warn':'prazo-ok';
-      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);margin-bottom:8px">
-        <div class="${cls}" style="font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:700;min-width:80px">${diff<0?'VENCIDO':diff+'d'}</div>
-        <div style="flex:1"><div style="font-size:.82rem;font-weight:600">${proc.descricao}</div><div style="font-size:.7rem;color:var(--text-muted)">${proc.numero} · ${(proc.responsaveis||[]).join(', ')||'—'}</div></div>
+      const cls=diff<0?'vencido':diff<=3?'urgente':'ok';
+      const label=diff<0?'VENCIDO':diff===0?'HOJE':diff+'d';
+      return `<div class="prazo-row">
+        <div class="prazo-dias-badge ${cls}">${label}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proc.descricao}</div>
+          <div style="font-size:.67rem;color:var(--text-muted);margin-top:2px">${proc.numero} · ${(proc.responsaveis||[]).join(', ')||'—'}</div>
+        </div>
         ${getStatusBadge(proc.status)}
+        ${proc.urgencia==='Crítica'?'<i class="fas fa-fire" style="color:var(--red);font-size:.75rem" title="Crítica"></i>':''}
       </div>`;
     }).join('');
   }
@@ -2437,7 +2955,7 @@ function showView(v){
   });
   document.getElementById('nav-'+v)?.classList.add('active');
   closeUserMenu();
-  if(v==='dashboard') renderDashboard();
+  if(v==='dashboard'){renderDashboard();updateDashDate();}
   if(v==='spaei-sync') renderSPAEIView();
   if(v==='admin') renderMembros();
 }
@@ -2514,5 +3032,28 @@ document.addEventListener('keydown',e=>{
   }
 });
 </script>
+
+<!-- ===== KPI DRAWER ===== -->
+<div class="kpi-drawer-overlay" id="kpi-drawer-overlay" onclick="closeKpiDrawer()"></div>
+<div class="kpi-drawer" id="kpi-drawer">
+  <div class="kpi-drawer-header">
+    <div class="kpi-drawer-icon" id="kpi-drawer-icon"></div>
+    <div class="kpi-drawer-title-wrap">
+      <h3 id="kpi-drawer-title-text">Detalhamento</h3>
+      <span id="kpi-drawer-subtitle"></span>
+    </div>
+    <span class="kpi-drawer-count" id="kpi-drawer-count">0</span>
+    <button class="kpi-drawer-close" onclick="closeKpiDrawer()"><i class="fas fa-times"></i></button>
+  </div>
+  <div class="kpi-drawer-pills" id="kpi-drawer-pills"></div>
+  <div class="kpi-drawer-search">
+    <div class="kpi-search-box">
+      <i class="fas fa-search"></i>
+      <input type="text" id="kpi-drawer-search-input" placeholder="Buscar processo, número, responsável..." oninput="filterDrawerContent()">
+    </div>
+  </div>
+  <div class="kpi-drawer-content" id="kpi-drawer-content"></div>
+</div>
+
 </body>
 </html>
