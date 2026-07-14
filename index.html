@@ -2153,7 +2153,7 @@ function listenFirebase(){
   });
   // Online status
   db.ref('.info/connected').on('value', snap=>{
-    STATE.isOnline = snap.val();
+    STATE.isOnline = snap.val() === true;
     const badge = document.getElementById('sync-badge');
     const label = document.getElementById('sync-label');
     if(STATE.isOnline){
@@ -2563,6 +2563,7 @@ function abrirModalEditar(id){
 
 async function salvarProcesso(){
   if(STATE.currentUser?.role!=='admin'){showToast('Apenas administradores podem salvar processos.','error');return;}
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede e tente novamente.','error');return;}
   const numero=document.getElementById('mp-numero').value.trim();
   const descricao=document.getElementById('mp-descricao').value.trim();
   if(!numero||!descricao){showToast('Número SEI e Descrição são obrigatórios.','error');return;}
@@ -2739,6 +2740,7 @@ function abrirModalMembroEditar(id){
 }
 
 async function salvarMembro(){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   const id=document.getElementById('mm-id').value||db.ref('/sei-digital/membros').push().key;
   const nome=document.getElementById('mm-nome').value.trim();
   if(!nome){showToast('Nome do membro é obrigatório.','error');return;}
@@ -2752,6 +2754,7 @@ async function salvarMembro(){
 }
 
 async function removerMembro(){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   const id=document.getElementById('mm-id').value;
   if(!id) return;
   confirmar('Remover Membro','Remover este membro do sistema?',async()=>{
@@ -2800,6 +2803,7 @@ function abrirModalPromocion(){
 }
 
 async function promoverAdmin(){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   const nome=document.getElementById('pa-nome').value.trim();
   const senha=document.getElementById('pa-senha').value;
   if(!nome||!senha){showToast('Nome e senha são obrigatórios.','error');return;}
@@ -2820,6 +2824,7 @@ async function promoverAdmin(){
 }
 
 async function revogarAdmin(id,nome){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   confirmar('Revogar Administrador',`Revogar acesso admin de "${nome}"?`,async()=>{
     await db.ref(`/sei-digital/admins/${id}/ativo`).set(false);
     showToast(`Acesso de "${nome}" revogado.`,'info');
@@ -2830,6 +2835,7 @@ async function revogarAdmin(id,nome){
 // SEGURANÇA
 // ========================================
 async function alterarSenhaGeral(){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   const nova=document.getElementById('nova-senha').value;
   const conf=document.getElementById('conf-senha').value;
   if(!nova){showToast('Informe a nova senha.','error');return;}
@@ -2853,6 +2859,7 @@ async function gerarTokenAdmin(){
 }
 
 async function alterarSenhaPerfil(){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   const nova=document.getElementById('p-nova').value;
   const conf=document.getElementById('p-conf').value;
   if(!nova||!conf){showToast('Preencha os campos.','error');return;}
@@ -2919,6 +2926,7 @@ function limparFiltros(){
 // CONFIG
 // ========================================
 async function salvarConfig(){
+  if(!STATE.isOnline){showToast('Sem conexão com o Firebase. Verifique sua rede.','error');return;}
   await db.ref('/sei-digital/config/diasAlerta').set(parseInt(document.getElementById('cfg-diasalerta').value)||7);
   await db.ref('/sei-digital/config/autoSync').set(document.getElementById('cfg-autosync').value);
   showToast('Configurações salvas!','success');
