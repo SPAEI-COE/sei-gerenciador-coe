@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <title>SEI DIGITAL COE — SPAEI/COE-PMERJ</title>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js">
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script>
 // ========================================
 // DASHBOARD PREMIUM — KPI DRAWER
 // ========================================
@@ -1291,7 +1292,7 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
         <div class="topbar-sub">SPAEI / COE-PMERJ</div>
       </div>
     </div>
-    <span id="topbar-view-title" style="font-size:.72rem;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:4px 12px;color:var(--text-muted);white-space:nowrap;display:none" class="topbar-clock">Processos</span>
+    <span id="topbar-view-title" style="font-size:.72rem;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:4px 12px;color:var(--text-muted);white-space:nowrap" class="topbar-clock">Processos</span>
     <div class="topbar-spacer"></div>
     <div class="sync-badge" id="sync-badge" title="Status da sincronização com Firebase">
       <div class="sync-dot"></div>
@@ -2246,6 +2247,7 @@ function iniciarApp(){
     document.getElementById('menu-admin-link').style.display='flex';
     document.getElementById('btn-novo').style.display='inline-flex';
     document.getElementById('btn-sync-all').style.display='inline-flex';
+    const mna=document.getElementById('mnav-admin'); if(mna) mna.style.display='flex';
   } else {
     document.getElementById('btn-novo').style.display='none';
     document.getElementById('btn-sync-all').style.display='none';
@@ -3168,18 +3170,6 @@ document.addEventListener('click',e=>{
 });
 
 // ========================================
-// SHA-256 async
-// ========================================
-async function sha256Async(msg){
-  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(msg));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-
-// ========================================
-// INIT
-// ========================================
-
-// ========================================
 // CATEGORIA DE PROCESSOS
 // ========================================
 const _KW_LIC=['licitação','licitacao','pregão','pregao','concorrência','concorrencia',
@@ -3351,7 +3341,9 @@ const _origRD=renderDashboard;
 window.renderDashboard=function(){
   _origRD();
   renderMembrosCarga();
-  setTimeout(renderCharts,50);
+  // Gráficos só quando dashboard visível
+  const isDashActive=document.getElementById('view-dashboard')?.classList.contains('active');
+  if(isDashActive) setTimeout(renderCharts,80);
 };
 
 // ========================================
@@ -3360,9 +3352,12 @@ window.renderDashboard=function(){
 const _origSV=showView;
 window.showView=function(v){
   _origSV(v);
+  // Mobile nav highlight
   document.querySelectorAll('.mob-nav-item').forEach(i=>i.classList.remove('active'));
   const mn=document.getElementById('mnav-'+v);
   if(mn) mn.classList.add('active');
+  // Forçar gráficos ao abrir dashboard (elemento agora visível)
+  if(v==='dashboard') setTimeout(renderCharts,120);
 };
 
 window.onload=()=>{
@@ -3376,9 +3371,8 @@ window.onload=()=>{
     if(tvt) tvt.style.display='';
   },100);
 
-  // Relógio hh:mm
-  function _tick(){const el=document.getElementById('clock-display');if(el)el.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
-  _tick(); setInterval(_tick,30000);
+  // Relógio já iniciado pelo startClock() no iniciarApp. Aqui apenas atualiza formato.
+  setTimeout(()=>{const el=document.getElementById('clock-display');if(el&&el.textContent.length>5)el.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});},200);
 
   // Restaurar sessão (fix bug pull-to-refresh)
   try{
