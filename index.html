@@ -42,9 +42,9 @@ const KPI_CFG={
       const em7=new Date(hoje); em7.setDate(em7.getDate()+7);
       return Object.values(STATE.processos).filter(p=>{
         if(!p.prazo) return false;
-        const d=new Date(p.prazo+'T00:00:00');
+        const d=_parsePrazo(p.prazo);
         return d>=hoje && d<=em7 && !['Finalizado','Cancelado','Encerrado','Baixado'].includes(p.status);
-      }).sort((a,b)=>a.prazo.localeCompare(b.prazo));
+      }).sort((a,b)=>_prazoKey(a.prazo).localeCompare(_prazoKey(b.prazo)));
     },
   },
   spaei:{
@@ -136,8 +136,8 @@ function _renderKpiPills(type,procs){
     );
   } else if(type==='prazo'){
     const hoje=new Date(); hoje.setHours(0,0,0,0);
-    const venc=procs.filter(p=>new Date(p.prazo+'T00:00:00')<hoje).length;
-    const urg3=procs.filter(p=>{const d=new Date(p.prazo+'T00:00:00');return d>=hoje&&Math.ceil((d-hoje)/86400000)<=3;}).length;
+    const venc=procs.filter(p=>_parsePrazo(p.prazo)<hoje).length;
+    const urg3=procs.filter(p=>{const d=_parsePrazo(p.prazo);return d>=hoje&&Math.ceil((d-hoje)/86400000)<=3;}).length;
     if(venc>0) pills.push(`<span class="kpi-pill" style="background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:var(--red)">${venc} Vencidos</span>`);
     if(urg3>0) pills.push(`<span class="kpi-pill" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:var(--amber)">${urg3} Vencem em ≤3d</span>`);
     pills.push(`<span class="kpi-pill" style="background:rgba(139,92,246,.15);border-color:rgba(139,92,246,.3);color:#A78BFA">${procs.length} total no período</span>`);
@@ -169,7 +169,7 @@ function _renderKpiContent(procs){
     const procId=Object.entries(STATE.processos).find(([,v])=>v.numero===proc.numero&&v.descricao===proc.descricao)?.[0]||'';
     let prazoHtml='';
     if(proc.prazo){
-      const d=new Date(proc.prazo+'T00:00:00');
+      const d=_parsePrazo(proc.prazo);
       const diff=Math.ceil((d-hoje)/86400000);
       const cls=diff<0?'vencido':diff<=3?'urgente':'ok';
       const lbl=diff<0?'VENC':diff===0?'HOJE':diff+'d';
@@ -426,6 +426,22 @@ body::before{
   font-size:.8rem;color:var(--text-muted);
   display:flex;align-items:center;gap:6px;
 }
+/* Botão Atualizar App */
+.update-btn{
+  display:flex;align-items:center;gap:7px;
+  background:var(--surface);
+  border:1px solid var(--border-subtle);
+  border-radius:20px;padding:6px 13px;
+  cursor:pointer;transition:.2s;
+  font-family:inherit;font-size:.76rem;font-weight:600;
+  color:var(--text-muted);
+}
+.update-btn:hover{border-color:var(--gold);color:var(--gold)}
+.update-btn:active{transform:scale(.96)}
+.update-btn i{font-size:.8rem}
+.update-btn.spinning i{animation:updateSpin .8s linear infinite}
+@keyframes updateSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.update-btn:disabled{opacity:.7;cursor:default}
 .user-pill{
   display:flex;align-items:center;gap:8px;
   background:var(--surface);
@@ -933,6 +949,8 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
   .stats-row{grid-template-columns:repeat(2,1fr)}
   .form-row,.form-row.triple{grid-template-columns:1fr}
   .topbar-clock{display:none}
+  .update-btn-label{display:none}
+  .update-btn{padding:6px 10px}
   .spaei-stat-row{grid-template-columns:1fr}
 }
 
@@ -1234,6 +1252,8 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
   .stats-row{grid-template-columns:repeat(2,1fr)}
   .form-row,.form-row.triple{grid-template-columns:1fr}
   .topbar-clock{display:none!important}
+  .update-btn-label{display:none!important}
+  .update-btn{padding:6px 10px!important}
   .spaei-stat-row{grid-template-columns:1fr}
   .dash-analytics-grid{grid-template-columns:1fr!important}
   #topbar-view-title{display:none!important}
@@ -1241,6 +1261,90 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
   th,td{padding:7px 8px!important}
 }
 </style>
+  <style>
+    /* ===== RELATÓRIOS ===== */
+    .rel-quick{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:20px}
+    .rel-quick-btn{display:flex;align-items:center;gap:14px;text-align:left;padding:16px 18px;border-radius:var(--radius);border:1px solid var(--border-subtle);cursor:pointer;color:var(--text);transition:.18s;font-family:inherit}
+    .rel-quick-btn>i:first-child{font-size:1.4rem;flex-shrink:0}
+    .rel-quick-btn b{display:block;font-size:.9rem;font-weight:700}
+    .rel-quick-btn small{display:block;font-size:.72rem;color:var(--text-muted);margin-top:2px}
+    .rel-quick-btn .rel-quick-go{margin-left:auto;font-size:.9rem;opacity:.5}
+    .rel-quick-btn:hover{transform:translateY(-2px)}
+    .rel-quick-btn.semana{background:linear-gradient(135deg,rgba(245,158,11,.16),rgba(245,158,11,.04))}
+    .rel-quick-btn.semana>i:first-child,.rel-quick-btn.semana .rel-quick-go{color:var(--amber)}
+    .rel-quick-btn.semana:hover{border-color:var(--amber)}
+    .rel-quick-btn.mes{background:linear-gradient(135deg,rgba(236,72,153,.16),rgba(236,72,153,.04))}
+    .rel-quick-btn.mes>i:first-child,.rel-quick-btn.mes .rel-quick-go{color:#EC4899}
+    .rel-quick-btn.mes:hover{border-color:#EC4899}
+    /* Banner de lembrete inteligente */
+    .rel-reminder{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;z-index:900;max-width:min(560px,92vw);display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:var(--radius);background:linear-gradient(135deg,var(--navy-600),var(--navy-700));border:1px solid var(--gold);box-shadow:0 12px 32px rgba(0,0,0,.45);animation:reminderIn .35s ease;cursor:pointer}
+    .rel-reminder .ri-ico{width:34px;height:34px;border-radius:50%;background:var(--gold);color:#000;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0}
+    .rel-reminder .ri-txt{font-size:.8rem;color:var(--text);line-height:1.3}
+    .rel-reminder .ri-txt b{color:var(--gold)}
+    .rel-reminder .ri-close{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:.95rem;padding:4px;flex-shrink:0}
+    .rel-reminder .ri-close:hover{color:var(--text)}
+    @keyframes reminderIn{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translate(-50%,0)}}
+    @media (max-width:640px){.rel-reminder{bottom:70px}}
+    /* Badge pulsante de alertas de prazo */
+    .prazo-badge{background:var(--red)!important;color:#fff!important}
+    .prazo-badge.pulsing{animation:prazoPulse 1.6s ease-in-out infinite}
+    @keyframes prazoPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
+    /* Linha do tempo do histórico */
+    .tl{position:relative;margin:8px 0 0;padding-left:22px}
+    .tl::before{content:'';position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:linear-gradient(180deg,var(--gold),var(--navy-400))}
+    .tl-item{position:relative;padding:0 0 14px 10px}
+    .tl-item:last-child{padding-bottom:2px}
+    .tl-item::before{content:'';position:absolute;left:-19px;top:3px;width:10px;height:10px;border-radius:50%;background:var(--gold);border:2px solid var(--navy-800);box-shadow:0 0 0 2px rgba(200,153,26,.25)}
+    .tl-item.sys::before{background:var(--navy-400)}
+    .tl-date{font-size:.66rem;color:var(--gold);font-family:'JetBrains Mono',monospace;font-weight:700}
+    .tl-text{font-size:.76rem;color:var(--text);line-height:1.4;margin-top:2px}
+    .tl-by{font-size:.64rem;color:var(--text-dim);margin-top:1px}
+    .tl-filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0 4px}
+    .tl-filterbar input{padding:5px 8px;font-size:.72rem}
+    /* Ranking de carga (pódio) */
+    .rank-list{display:flex;flex-direction:column;gap:7px}
+    .rank-row{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:var(--radius-sm);background:rgba(5,14,31,.3);border:1px solid var(--border-subtle);cursor:pointer;transition:.15s}
+    .rank-row:hover{border-color:var(--gold);transform:translateX(2px)}
+    .rank-pos{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;flex-shrink:0;background:var(--navy-500);color:var(--text)}
+    .rank-row:nth-child(1) .rank-pos{background:linear-gradient(135deg,#FFD700,#C8991A);color:#000}
+    .rank-row:nth-child(2) .rank-pos{background:linear-gradient(135deg,#C0C7D0,#8B93A0);color:#000}
+    .rank-row:nth-child(3) .rank-pos{background:linear-gradient(135deg,#CD7F32,#A0642A);color:#fff}
+    .rank-av{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--navy-400),var(--navy-500));display:flex;align-items:center;justify-content:center;font-size:.66rem;font-weight:700;color:var(--gold);border:1px solid var(--gold);flex-shrink:0}
+    .rank-nome{flex:1;font-size:.78rem;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .rank-track{width:80px;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;flex-shrink:0}
+    .rank-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--gold),var(--amber))}
+    .rank-count{font-family:'JetBrains Mono',monospace;font-size:.76rem;font-weight:700;color:var(--gold);min-width:24px;text-align:right;flex-shrink:0}
+    .rel-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+    .rel-card{display:flex;gap:12px;align-items:flex-start;padding:14px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius);cursor:pointer;transition:.18s}
+    .rel-card:hover{border-color:var(--gold);transform:translateY(-2px)}
+    .rel-card.active{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
+    .rel-card-ico{width:40px;height:40px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
+    .rel-card-body h4{font-size:.85rem;font-weight:700;color:var(--text);margin:0 0 3px}
+    .rel-card-body p{font-size:.72rem;color:var(--text-muted);margin:0;line-height:1.35}
+    .rel-preview{background:#fff;color:#1a1a1a;border-radius:var(--radius-sm);padding:26px 30px;font-size:.8rem;max-height:640px;overflow:auto}
+    .rel-preview h1{font-size:1rem;text-align:center;margin:0;color:#0A1628;letter-spacing:.5px}
+    .rel-preview h2{font-size:.82rem;text-align:center;margin:2px 0 0;color:#C8991A;font-weight:700}
+    .rel-preview .rel-meta{text-align:center;font-size:.68rem;color:#555;margin:6px 0 14px;border-bottom:2px solid #C8991A;padding-bottom:10px}
+    .rel-preview h3{font-size:.82rem;color:#0A1628;margin:16px 0 8px;border-left:3px solid #C8991A;padding-left:8px}
+    .rel-preview table{width:100%;border-collapse:collapse;margin:8px 0;font-size:.68rem}
+    .rel-preview th{background:#0A1628;color:#fff;text-align:left;padding:5px 7px}
+    .rel-preview td{border-bottom:1px solid #ddd;padding:5px 7px;vertical-align:top}
+    .rel-preview tr:nth-child(even) td{background:#f6f8fb}
+    .rel-preview .rel-kpis{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+    .rel-preview .rel-kpi{flex:1;min-width:110px;background:#f0f3f8;border:1px solid #dbe2ee;border-radius:6px;padding:9px 12px;text-align:center}
+    .rel-preview .rel-kpi b{display:block;font-size:1.2rem;color:#0A1628}
+    .rel-preview .rel-kpi span{font-size:.64rem;color:#666;text-transform:uppercase;letter-spacing:.5px}
+    .rel-preview .rel-foot{margin-top:18px;padding-top:10px;border-top:1px solid #ccc;font-size:.64rem;color:#666}
+    .rel-preview .rel-cod{font-family:'JetBrains Mono',monospace;font-weight:700;color:#0A1628;background:#f0e6c8;padding:2px 6px;border-radius:4px}
+    @media print{
+      body *{visibility:hidden}
+      #rel-preview,#rel-preview *{visibility:visible}
+      #rel-preview{position:absolute;left:0;top:0;width:100%;max-height:none;box-shadow:none;padding:0}
+    }
+  </style>
+  <!-- pdfmake (geração de PDF client-side) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.js"></script>
 </head>
 <body>
 
@@ -1302,6 +1406,10 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
       <i class="fas fa-link" style="font-size:.7rem"></i>
       <span>SPAEI</span>
     </div>
+    <button class="update-btn" id="update-btn" onclick="forceAppUpdate()" title="Forçar atualização para a última versão" aria-label="Atualizar App">
+      <i class="fas fa-arrows-rotate" id="update-icon"></i>
+      <span class="update-btn-label">Atualizar</span>
+    </button>
     <div class="topbar-clock">
       <i class="fas fa-clock" style="color:var(--text-dim)"></i>
       <span id="clock-display">--:--:--</span>
@@ -1347,9 +1455,16 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
         <div class="sidebar-item" onclick="showView('dashboard')" id="nav-dashboard">
           <i class="fas fa-chart-line"></i> Dashboard
         </div>
+        <div class="sidebar-item" onclick="abrirAlertasPrazo()" id="nav-prazos">
+          <i class="fas fa-bell"></i> Alertas de Prazo
+          <span class="sidebar-badge prazo-badge" id="sb-prazos" style="display:none">0</span>
+        </div>
         <div class="sidebar-item" onclick="showView('spaei-sync')" id="nav-spaei">
           <i class="fas fa-sync-alt"></i> Integração SPAEI
           <span class="sidebar-badge" id="sb-spaei" style="background:var(--gold);color:#000">0</span>
+        </div>
+        <div class="sidebar-item" onclick="showView('relatorios')" id="nav-relatorios" style="display:none">
+          <i class="fas fa-file-contract"></i> Relatórios
         </div>
         <div class="sidebar-item" onclick="showView('admin')" id="nav-admin" style="display:none">
           <i class="fas fa-shield-halved"></i> Painel Admin
@@ -1633,7 +1748,7 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
         <!-- Distribuição responsáveis + Prazos -->
         <div class="dash-analytics-grid" style="margin-top:16px">
           <div class="dash-panel">
-            <div class="dash-panel-header"><i class="fas fa-users"></i> Distribuição por Responsável</div>
+            <div class="dash-panel-header"><i class="fas fa-ranking-star"></i> Ranking de Carga (processos ativos)</div>
             <div class="dash-panel-body" id="dash-resp"></div>
           </div>
           <div class="dash-panel">
@@ -1746,6 +1861,24 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
           </div>
         </div>
 
+        <!-- Backup & Exportação -->
+        <div class="admin-section" style="margin-bottom:20px">
+          <div class="admin-section-header">
+            <div class="admin-section-title"><i class="fas fa-database"></i> Backup &amp; Exportação</div>
+          </div>
+          <div class="admin-content">
+            <p style="font-size:.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.5">
+              Baixe um backup completo do sistema em formato <b>.json</b> — inclui todos os processos, membros e configurações. <b>Senhas e tokens não são exportados</b> por segurança. Guarde o arquivo em local seguro.
+            </p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" onclick="exportarBackupJSON()">
+                <i class="fas fa-download"></i> Baixar Backup Completo (.json)
+              </button>
+            </div>
+            <div id="backup-info" style="font-size:.72rem;color:var(--text-dim);margin-top:10px"></div>
+          </div>
+        </div>
+
         <!-- Administradores -->
         <div class="admin-section" style="margin-bottom:20px">
           <div class="admin-section-header">
@@ -1842,6 +1975,146 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
         </div>
       </div>
 
+      <!-- VIEW: RELATÓRIOS -->
+      <div class="view" id="view-relatorios">
+        <div class="section-label"><i class="fas fa-file-contract"></i> Central de Relatórios</div>
+
+        <!-- Cards de tipos de relatório -->
+        <!-- Ações rápidas: 1 clique gera preview automático -->
+        <div class="rel-quick" id="rel-quick">
+          <button class="rel-quick-btn semana" onclick="gerarRelatorioRapido('semanal')">
+            <i class="fas fa-calendar-week"></i>
+            <div><b>Gerar Relatório da Semana Atual</b><small id="rel-quick-semana-lbl">Segunda a domingo da semana vigente</small></div>
+            <i class="fas fa-bolt rel-quick-go"></i>
+          </button>
+          <button class="rel-quick-btn mes" onclick="gerarRelatorioRapido('mensal')">
+            <i class="fas fa-calendar-days"></i>
+            <div><b>Gerar Relatório do Mês Atual</b><small id="rel-quick-mes-lbl">Resumo executivo do mês vigente</small></div>
+            <i class="fas fa-bolt rel-quick-go"></i>
+          </button>
+        </div>
+
+        <!-- Ranking de carga por membro -->
+        <div class="admin-section" style="margin-bottom:20px">
+          <div class="admin-section-header">
+            <div class="admin-section-title"><i class="fas fa-ranking-star"></i> Ranking de Carga por Responsável (processos ativos)</div>
+            <span style="font-size:.68rem;color:var(--text-dim)">Clique num nome para ver os processos</span>
+          </div>
+          <div class="admin-content"><div id="rel-ranking"></div></div>
+        </div>
+
+        <div class="rel-cards" id="rel-cards">
+          <div class="rel-card" onclick="selecionarRelatorio('membro',this)">
+            <div class="rel-card-ico" style="background:rgba(200,153,26,.15);color:var(--gold)"><i class="fas fa-user-tie"></i></div>
+            <div class="rel-card-body"><h4>Por Responsável</h4><p>Quantitativos e lista de processos por militar responsável</p></div>
+          </div>
+          <div class="rel-card" onclick="selecionarRelatorio('unidade',this)">
+            <div class="rel-card-ico" style="background:rgba(16,185,129,.15);color:var(--emerald)"><i class="fas fa-building-shield"></i></div>
+            <div class="rel-card-body"><h4>Por Unidade</h4><p>Processos consolidados por OPM subordinada ao COE</p></div>
+          </div>
+          <div class="rel-card" onclick="selecionarRelatorio('status',this)">
+            <div class="rel-card-ico" style="background:rgba(59,130,246,.15);color:#60A5FA"><i class="fas fa-list-check"></i></div>
+            <div class="rel-card-body"><h4>Por Status</h4><p>Andamento, Aguardando, Finalizado, Encerrado, Cancelado</p></div>
+          </div>
+          <div class="rel-card" onclick="selecionarRelatorio('periodo',this)">
+            <div class="rel-card-ico" style="background:rgba(167,139,250,.15);color:#A78BFA"><i class="fas fa-calendar-range"></i></div>
+            <div class="rel-card-body"><h4>Por Período</h4><p>Intervalo de datas customizado (data de atualização)</p></div>
+          </div>
+          <div class="rel-card" onclick="selecionarRelatorio('semanal',this)">
+            <div class="rel-card-ico" style="background:rgba(245,158,11,.15);color:var(--amber)"><i class="fas fa-calendar-week"></i></div>
+            <div class="rel-card-body"><h4>Semanal</h4><p>Movimentação da semana vigente (seg a dom)</p></div>
+          </div>
+          <div class="rel-card" onclick="selecionarRelatorio('mensal',this)">
+            <div class="rel-card-ico" style="background:rgba(236,72,153,.15);color:#EC4899"><i class="fas fa-calendar-days"></i></div>
+            <div class="rel-card-body"><h4>Mensal</h4><p>Movimentação do mês vigente</p></div>
+          </div>
+          <div class="rel-card" onclick="selecionarRelatorio('geral',this)">
+            <div class="rel-card-ico" style="background:rgba(239,68,68,.15);color:var(--red)"><i class="fas fa-layer-group"></i></div>
+            <div class="rel-card-body"><h4>Geral</h4><p>Todos os processos com os filtros abaixo aplicados</p></div>
+          </div>
+        </div>
+
+        <!-- Painel de filtros + preview -->
+        <div class="admin-section" id="rel-config" style="margin-top:20px;display:none">
+          <div class="admin-section-header">
+            <div class="admin-section-title"><i class="fas fa-sliders"></i> <span id="rel-config-title">Configurar Relatório</span></div>
+          </div>
+          <div class="admin-content">
+            <div class="form-row">
+              <div class="form-field" id="rel-fld-membro" style="display:none">
+                <label>Responsável</label>
+                <select id="rel-membro"><option value="">Todos os responsáveis</option></select>
+              </div>
+              <div class="form-field" id="rel-fld-unidade" style="display:none">
+                <label>Unidade</label>
+                <select id="rel-unidade">
+                  <option value="">Todas as Unidades</option>
+                  <option>COE</option><option>BPCHQ</option><option>BOPE</option><option>BTM</option>
+                  <option>GAM</option><option>BAC</option><option>CIESPP</option>
+                </select>
+              </div>
+              <div class="form-field" id="rel-fld-status" style="display:none">
+                <label>Status</label>
+                <select id="rel-status">
+                  <option value="">Todos os status</option>
+                  <option>Em Andamento</option><option>Aguardando</option><option>Finalizado</option>
+                  <option>Baixado</option><option>Encerrado</option><option>Cancelado</option>
+                </select>
+              </div>
+              <div class="form-field" id="rel-fld-dtini" style="display:none">
+                <label>Data inicial</label>
+                <input type="date" id="rel-dtini">
+              </div>
+              <div class="form-field" id="rel-fld-dtfim" style="display:none">
+                <label>Data final</label>
+                <input type="date" id="rel-dtfim">
+              </div>
+            </div>
+
+            <!-- Filtros combináveis adicionais -->
+            <div class="form-row">
+              <div class="form-field">
+                <label>Urgência</label>
+                <select id="rel-f-urgencia"><option value="">Todas</option><option>Crítica</option><option>Alta</option><option>Normal</option><option>Baixa</option></select>
+              </div>
+              <div class="form-field">
+                <label>PCA</label>
+                <select id="rel-f-pca"><option value="">Todos</option><option>PCA 2025</option><option>PCA 2026</option></select>
+              </div>
+              <div class="form-field">
+                <label>Categoria</label>
+                <select id="rel-f-categoria"><option value="">Todas</option><option value="licitacao">Licitação/Aquisição</option><option value="demais">Demais processos</option></select>
+              </div>
+              <div class="form-field">
+                <label>Duplicatas</label>
+                <select id="rel-f-dup"><option value="excluir">Excluir duplicatas</option><option value="incluir">Incluir duplicatas</option></select>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+              <button class="btn btn-primary btn-sm" onclick="gerarPreviewRelatorio()"><i class="fas fa-eye"></i> Pré-visualizar</button>
+              <button class="btn btn-secondary btn-sm" onclick="cancelarRelatorio()"><i class="fas fa-times"></i> Cancelar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="admin-section" id="rel-preview-wrap" style="margin-top:20px;display:none">
+          <div class="admin-section-header">
+            <div class="admin-section-title"><i class="fas fa-file-lines"></i> Pré-visualização</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" onclick="exportarRelatorioPDF()"><i class="fas fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportarRelatorioMD()"><i class="fas fa-file-code"></i> Markdown</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportarRelatorioCSV()"><i class="fas fa-file-csv"></i> CSV</button>
+              <button class="btn btn-secondary btn-sm" onclick="imprimirRelatorio()"><i class="fas fa-print"></i> Imprimir</button>
+            </div>
+          </div>
+          <div class="admin-content">
+            <div id="rel-preview" class="rel-preview"></div>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /main-content -->
   </div><!-- /app-body -->
   <!-- MOBILE NAV -->
@@ -1854,6 +2127,9 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
     </div>
     <div class="mob-nav-item" id="mnav-spaei-sync" onclick="showView('spaei-sync')">
       <i class="fas fa-sync-alt"></i>SPAEI
+    </div>
+    <div class="mob-nav-item" id="mnav-relatorios" style="display:none" onclick="showView('relatorios')">
+      <i class="fas fa-file-contract"></i>Relatórios
     </div>
     <div class="mob-nav-item" id="mnav-admin" style="display:none" onclick="showView('admin')">
       <i class="fas fa-shield-halved"></i>Admin
@@ -1970,8 +2246,16 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
       </div>
       <!-- Histórico -->
       <div id="mp-historico-wrap" style="display:none;margin-top:16px">
-        <div class="section-label" style="font-size:.62rem"><i class="fas fa-history"></i> Histórico</div>
-        <div class="historico-list" id="mp-historico"></div>
+        <div class="section-label" style="font-size:.62rem"><i class="fas fa-timeline"></i> Linha do Tempo do Processo</div>
+        <div class="tl-filterbar">
+          <label style="font-size:.68rem;color:var(--text-muted)">De</label>
+          <input type="date" id="mp-hist-de" onchange="renderTimelineHistorico()">
+          <label style="font-size:.68rem;color:var(--text-muted)">até</label>
+          <input type="date" id="mp-hist-ate" onchange="renderTimelineHistorico()">
+          <button class="btn btn-secondary btn-sm" onclick="limparFiltroHistorico()"><i class="fas fa-eraser"></i> Limpar</button>
+          <span id="mp-hist-info" style="font-size:.66rem;color:var(--text-dim);margin-left:auto"></span>
+        </div>
+        <div class="tl" id="mp-historico"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -2134,9 +2418,25 @@ let STATE = {
   filterResp: '',
   filterPCA: '',
   filterSPAEI: '',
+  filterPrazo: '', // '', '3', '7' — alerta de prazo em dias
   editingId: null,
   isOnline: false,
 };
+
+// Parser universal de prazo: aceita 'aaaa-mm-dd' (input date) e 'dd/mm/aaaa' (SEED)
+// Retorna Date à meia-noite local, ou null se inválido/ausente.
+function _parsePrazo(v){
+  if(!v) return null;
+  let m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(m) return new Date(+m[1],+m[2]-1,+m[3]);
+  m=String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if(m) return new Date(+m[3],+m[2]-1,+m[1]);
+  const d=new Date(v); return isNaN(d)?null:d;
+}
+// Formata prazo para exibição dd/mm/aaaa a partir de qualquer formato aceito
+function _fmtPrazo(v){ const d=_parsePrazo(v); return d?d.toLocaleDateString('pt-BR'):'—'; }
+// Chave ordenável (aaaa-mm-dd) independentemente do formato de entrada
+function _prazoKey(v){ const d=_parsePrazo(v); return d?d.toISOString().slice(0,10):''; }
 
 // ========================================
 // SHA-256
@@ -2244,6 +2544,8 @@ function iniciarApp(){
   if(u.role==='admin'){
     document.getElementById('role-badge').style.display='inline-flex';
     document.getElementById('nav-admin').style.display='flex';
+    document.getElementById('nav-relatorios').style.display='flex';
+    const mnr=document.getElementById('mnav-relatorios'); if(mnr) mnr.style.display='flex';
     document.getElementById('menu-admin-link').style.display='flex';
     document.getElementById('btn-novo').style.display='inline-flex';
     document.getElementById('btn-sync-all').style.display='inline-flex';
@@ -2256,6 +2558,9 @@ function iniciarApp(){
   startClock();
   listenFirebase();
   carregarSelectResp();
+  // Lembretes visuais inteligentes (semanal/mensal) — aguarda dados carregarem
+  setTimeout(()=>{ try{ verificarLembretesRelatorio(); }catch(e){}
+    try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){} }, 2500);
 }
 
 function doLogout(){
@@ -2267,6 +2572,65 @@ function doLogout(){
 // ========================================
 // CLOCK
 // ========================================
+// ========================================
+// ATUALIZAÇÃO DO APP (cache-busting)
+// ========================================
+// Versão atual embarcada no build. Ao publicar, atualize também version.json
+// no repositório com o mesmo número para a verificação "inteligente" funcionar.
+const APP_VERSION = '2026.07.27';
+
+async function forceAppUpdate(){
+  const btn=document.getElementById('update-btn');
+  const icon=document.getElementById('update-icon');
+  if(btn?.disabled) return;
+  if(btn){ btn.disabled=true; btn.classList.add('spinning'); }
+  showToast('Verificando atualização...','info');
+
+  let precisaReload=true; // default: se algo falhar, força reload mesmo assim
+  let versaoNova=null;
+
+  // 1) Tenta ler version.json (opcional). Cache-bust na própria checagem.
+  try{
+    const resp=await fetch('version.json?_='+Date.now(),{cache:'no-store'});
+    if(resp.ok){
+      const data=await resp.json();
+      versaoNova=data.version||data.versao||null;
+      // Só evita reload se o arquivo existe E a versão é igual à embarcada
+      if(versaoNova && String(versaoNova)===String(APP_VERSION)){
+        precisaReload=false;
+      }
+    }
+  }catch(e){ /* sem version.json ou offline: segue para reload forçado */ }
+
+  // 2) Limpa Cache Storage (se houver SW/cache), sem registrar SW novo.
+  try{
+    if('caches' in window){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+
+  if(!precisaReload){
+    // Já está na versão mais recente
+    if(btn){ btn.disabled=false; btn.classList.remove('spinning'); }
+    showToast('App já está na versão mais recente ('+APP_VERSION+').','success');
+    return;
+  }
+
+  // 3) Reload com cache-busting via query string de versão
+  showToast('App atualizado para a versão mais recente. Recarregando...','success');
+  setTimeout(()=>{
+    try{
+      const url=new URL(window.location.href);
+      url.searchParams.set('v', versaoNova || Date.now().toString());
+      window.location.replace(url.toString()); // replace evita entrada extra no histórico
+    }catch(e){
+      // Fallback máximo
+      window.location.reload(true);
+    }
+  }, 700);
+}
+
 function startClock(){
   setInterval(()=>{
     const d=new Date();
@@ -2346,6 +2710,7 @@ function updateUI(){
   renderDashboard();
   renderSPAEIView();
   updateSidebarCounts();
+  atualizarBadgePrazo();
 }
 
 function calcStats(){
@@ -2358,7 +2723,7 @@ function calcStats(){
   const em7 = new Date(hoje); em7.setDate(em7.getDate()+7);
   const prazo7 = p.filter(x=>{
     if(!x.prazo) return false;
-    const d=new Date(x.prazo+'T00:00:00');
+    const d=_parsePrazo(x.prazo);
     return d>=hoje && d<=em7 && !['Finalizado','Cancelado','Encerrado','Baixado'].includes(x.status);
   }).length;
   const spaeiSync = p.filter(x=>x.spaeiSync).length;
@@ -2408,6 +2773,17 @@ function getFilteredProcessos(){
   if(fPCA) p=p.filter(x=>x.pca===fPCA);
   if(fSPAEI==='sim') p=p.filter(x=>x.spaeiSync);
   if(fSPAEI==='nao') p=p.filter(x=>!x.spaeiSync);
+  if(STATE.filterPrazo){
+    const dias=+STATE.filterPrazo;
+    const hoje0=new Date(); hoje0.setHours(0,0,0,0);
+    const lim=new Date(hoje0); lim.setDate(lim.getDate()+dias); lim.setHours(23,59,59,999);
+    const concl=['Finalizado','Cancelado','Encerrado','Baixado'];
+    p=p.filter(x=>{
+      if(!x.prazo || concl.includes(x.status)) return false;
+      const d=_parsePrazo(x.prazo);
+      return d<=lim; // inclui vencidos e os que vencem até o limite
+    });
+  }
   if(q) p=p.filter(x=>
     (x.numero||'').toLowerCase().includes(q)||
     (x.descricao||'').toLowerCase().includes(q)||
@@ -2419,7 +2795,7 @@ function getFilteredProcessos(){
     const urgMap={Crítica:0,Alta:1,Normal:2,Baixa:3};
     const ua=urgMap[a.urgencia]??2, ub=urgMap[b.urgencia]??2;
     if(ua!==ub) return ua-ub;
-    if(a.prazo&&b.prazo) return a.prazo.localeCompare(b.prazo);
+    if(a.prazo&&b.prazo) return _prazoKey(a.prazo).localeCompare(_prazoKey(b.prazo));
     if(a.prazo) return -1; if(b.prazo) return 1;
     return (b.dataCriacao||0)-(a.dataCriacao||0);
   });
@@ -2442,11 +2818,11 @@ function renderTable(){
     const urgBadge=getUrgBadge(proc.urgencia);
     let prazoHtml='<span style="color:var(--text-dim)">—</span>';
     if(proc.prazo){
-      const d=new Date(proc.prazo+'T00:00:00');
+      const d=_parsePrazo(proc.prazo);
       const diff=Math.ceil((d-hoje)/(1000*60*60*24));
       const cls=diff<0?'prazo-vencido':diff<=7?'prazo-warn':'prazo-ok';
       const label=diff<0?'Vencido':`${diff}d`;
-      prazoHtml=`<span class="${cls}" style="font-size:.75rem;font-weight:600">${proc.prazo.split('-').reverse().join('/')} <span style="font-size:.65rem">(${label})</span></span>`;
+      prazoHtml=`<span class="${cls}" style="font-size:.75rem;font-weight:600">${_fmtPrazo(proc.prazo)} <span style="font-size:.65rem">(${label})</span></span>`;
     }
     const resps=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${r}</span>`).join('');
     const pcaHtml=proc.pca?`<span class="pca-chip">${proc.pca}</span>`:'<span style="color:var(--text-dim)">—</span>';
@@ -2496,7 +2872,7 @@ function renderDashboard(){
   const em7=new Date(hoje); em7.setDate(em7.getDate()+7);
   const prazo7=p.filter(x=>{
     if(!x.prazo) return false;
-    const d=new Date(x.prazo+'T00:00:00');
+    const d=_parsePrazo(x.prazo);
     return d>=hoje && d<=em7 && !['Finalizado','Cancelado','Encerrado','Baixado'].includes(x.status);
   }).length;
   const spaeiSync=p.filter(x=>x.spaeiSync).length;
@@ -2506,25 +2882,30 @@ function renderDashboard(){
   // Atualizar data
   updateDashDate();
 
-  // Por responsável — barra visual
+  // Ranking de carga por membro — apenas processos ATIVOS (não concluídos)
+  const concl=['Finalizado','Cancelado','Encerrado','Baixado'];
   const respCount={};
-  p.forEach(proc=>(proc.responsaveis||[]).forEach(r=>{respCount[r]=(respCount[r]||0)+1}));
+  p.forEach(proc=>{
+    if(concl.includes(proc.status)) return;
+    (proc.responsaveis||[]).forEach(r=>{respCount[r]=(respCount[r]||0)+1});
+  });
   const respEntries=Object.entries(respCount).sort((a,b)=>b[1]-a[1]);
   const maxResp=respEntries[0]?.[1]||1;
   const dr=document.getElementById('dash-resp');
   if(dr){
-    if(!respEntries.length){dr.innerHTML='<div style="color:var(--text-dim);font-size:.78rem;padding:4px 0">Nenhum responsável atribuído</div>';
+    if(!respEntries.length){dr.innerHTML='<div style="color:var(--text-dim);font-size:.78rem;padding:4px 0">Nenhum responsável com processos ativos</div>';
     }else{
-      dr.innerHTML=respEntries.map(([nome,cnt])=>{
+      dr.innerHTML=`<div class="rank-list">`+respEntries.map(([nome,cnt],i)=>{
         const pct=Math.round((cnt/maxResp)*100);
         const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
-        return `<div class="dist-bar-row">
-          <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--navy-400),var(--navy-500));display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;color:var(--gold);border:1px solid var(--gold);flex-shrink:0">${init}</div>
-          <div class="dist-bar-label" title="${nome}">${nome}</div>
-          <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:linear-gradient(90deg,var(--cyan),var(--navy-400))"></div></div>
-          <div class="dist-bar-count">${cnt}</div>
+        return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${nome}">
+          <div class="rank-pos">${i+1}</div>
+          <div class="rank-av">${init}</div>
+          <div class="rank-nome" title="${nome}">${nome}</div>
+          <div class="rank-track"><div class="rank-fill" style="width:${pct}%"></div></div>
+          <div class="rank-count">${cnt}</div>
         </div>`;
-      }).join('');
+      }).join('')+`</div>`;
     }
   }
 
@@ -2554,9 +2935,9 @@ function renderDashboard(){
   const em15=new Date(hoje); em15.setDate(em15.getDate()+15);
   const comPrazo=p.filter(x=>{
     if(!x.prazo||['Finalizado','Cancelado','Encerrado','Baixado'].includes(x.status)) return false;
-    const d=new Date(x.prazo+'T00:00:00');
+    const d=_parsePrazo(x.prazo);
     return d<=em15;
-  }).sort((a,b)=>a.prazo.localeCompare(b.prazo));
+  }).sort((a,b)=>_prazoKey(a.prazo).localeCompare(_prazoKey(b.prazo)));
   const dp=document.getElementById('dash-prazos');
   if(dp){
     if(comPrazo.length===0){
@@ -2564,7 +2945,7 @@ function renderDashboard(){
       return;
     }
     dp.innerHTML=comPrazo.map(proc=>{
-      const d=new Date(proc.prazo+'T00:00:00');
+      const d=_parsePrazo(proc.prazo);
       const diff=Math.ceil((d-hoje)/(1000*60*60*24));
       const cls=diff<0?'vencido':diff<=3?'urgente':'ok';
       const label=diff<0?'VENCIDO':diff===0?'HOJE':diff+'d';
@@ -2606,7 +2987,7 @@ function renderSPAEIView(){
       <td class="td-numero">${proc.numero}</td>
       <td>${truncate(proc.descricao,35)}</td>
       <td><div class="resp-list">${(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${r}</span>`).join('')||'—'}</div></td>
-      <td>${proc.prazo?proc.prazo.split('-').reverse().join('/'):'—'}</td>
+      <td>${proc.prazo?_fmtPrazo(proc.prazo):'—'}</td>
       <td>${getUrgBadge(proc.urgencia)}</td>
       <td>${getStatusBadge(proc.status)}</td>
       <td style="font-size:.72rem;color:var(--text-muted)">${proc.spaeiSyncAt?new Date(proc.spaeiSyncAt).toLocaleString('pt-BR'):'—'}</td>
@@ -2688,16 +3069,12 @@ function abrirModalEditar(id){
     el.querySelector('input').checked=sel;
   });
 
-  // Histórico
+  // Histórico → linha do tempo (com filtro de período)
+  document.getElementById('mp-hist-de').value='';
+  document.getElementById('mp-hist-ate').value='';
   if(proc.historico && proc.historico.length>0){
     document.getElementById('mp-historico-wrap').style.display='block';
-    document.getElementById('mp-historico').innerHTML=proc.historico.slice().reverse().map(h=>`
-      <div class="hist-item">
-        <div class="hist-dot"></div>
-        <div class="hist-text">${h.texto}</div>
-        <div class="hist-date">${h.data}</div>
-      </div>
-    `).join('');
+    renderTimelineHistorico();
   } else document.getElementById('mp-historico-wrap').style.display='none';
 
   const isAdmin=STATE.currentUser?.role==='admin';
@@ -2714,6 +3091,51 @@ function abrirModalEditar(id){
   document.getElementById('mp-spaei').disabled=!isAdmin;
 
   abrirModal('modal-processo');
+}
+
+// Renderiza a linha do tempo do histórico do processo em edição, aplicando filtro de período
+function renderTimelineHistorico(){
+  const id=STATE.editingId;
+  const proc=id?STATE.processos[id]:null;
+  const cont=document.getElementById('mp-historico');
+  if(!proc || !cont) return;
+  let hist=(proc.historico||[]).slice();
+
+  // Filtro por período (usa a data do evento "dd/mm/aaaa ...")
+  const de=document.getElementById('mp-hist-de').value;
+  const ate=document.getElementById('mp-hist-ate').value;
+  const dDe = de?new Date(de+'T00:00:00'):null;
+  const dAte = ate?new Date(ate+'T23:59:59'):null;
+  const parseH=(s)=>{ const m=String(s||'').match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/); return m?new Date(+m[3],+m[2]-1,+m[1],+(m[4]||0),+(m[5]||0)):null; };
+
+  const total=hist.length;
+  if(dDe||dAte){
+    hist=hist.filter(h=>{ const d=parseH(h.data); if(!d) return false; if(dDe&&d<dDe) return false; if(dAte&&d>dAte) return false; return true; });
+  }
+
+  const info=document.getElementById('mp-hist-info');
+  if(info) info.textContent = (dDe||dAte) ? `${hist.length} de ${total} eventos` : `${total} evento(s)`;
+
+  if(hist.length===0){
+    cont.innerHTML=`<div style="font-size:.74rem;color:var(--text-dim);padding:6px 0">Nenhum evento no período selecionado.</div>`;
+    return;
+  }
+  // Mais recente primeiro
+  const ordenado=hist.slice().sort((a,b)=>{ const da=parseH(a.data)?.getTime()||0, db2=parseH(b.data)?.getTime()||0; return db2-da; });
+  cont.innerHTML=ordenado.map(h=>{
+    const isSys=/sistema/i.test(h.por||'');
+    return `<div class="tl-item${isSys?' sys':''}">
+      <div class="tl-date">${h.data||'—'}</div>
+      <div class="tl-text">${h.texto||'—'}</div>
+      ${h.por?`<div class="tl-by"><i class="fas fa-user" style="font-size:.6rem"></i> ${h.por}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function limparFiltroHistorico(){
+  document.getElementById('mp-hist-de').value='';
+  document.getElementById('mp-hist-ate').value='';
+  renderTimelineHistorico();
 }
 
 async function salvarProcesso(){
@@ -3034,33 +3456,100 @@ async function alterarSenhaPerfil(){
 // ========================================
 function filtrarUnidade(u){
   STATE.filterUnidade=u;
-  STATE.filterStatus='';STATE.filterUrgencia='';
+  STATE.filterStatus='';STATE.filterUrgencia='';STATE.filterPrazo='';
   document.querySelectorAll('.unidade-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('u-'+u)?.classList.add('active');
   renderTable();
   showView('processos');
 }
 function filtrarStatus(s){
-  STATE.filterStatus=s;STATE.filterUnidade='TODAS';STATE.filterUrgencia='';
+  STATE.filterStatus=s;STATE.filterUnidade='TODAS';STATE.filterUrgencia='';STATE.filterPrazo='';
   document.getElementById('f-status').value=s;
   document.querySelectorAll('.unidade-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('u-TODAS')?.classList.add('active');
   renderTable();showView('processos');
 }
 function filtrarUrgencia(u){
-  STATE.filterUrgencia=u;STATE.filterUnidade='TODAS';STATE.filterStatus='';
+  STATE.filterUrgencia=u;STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterPrazo='';
   document.getElementById('f-urgencia').value=u;
   document.querySelectorAll('.unidade-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('u-TODAS')?.classList.add('active');
   renderTable();showView('processos');
 }
 function filtrarPrazo(){
-  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';
+  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';STATE.filterPrazo='7';
+  document.querySelectorAll('.unidade-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('u-TODAS')?.classList.add('active');
   renderTable();showView('processos');
 }
+
+// ---- Alertas de prazo proativos ----
+// Conta processos por faixa de prazo (vencidos, ≤3d, ≤7d), ignorando concluídos
+function contarAlertasPrazo(){
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const concl=['Finalizado','Cancelado','Encerrado','Baixado'];
+  let vencidos=0, ate3=0, ate7=0, total7=0;
+  const lista3=[], lista7=[];
+  Object.entries(STATE.processos).forEach(([id,p])=>{
+    if(!p.prazo || concl.includes(p.status)) return;
+    const d=_parsePrazo(p.prazo);
+    const diff=Math.ceil((d-hoje)/86400000);
+    if(diff<0){ vencidos++; total7++; lista3.push({...p,id,diff}); lista7.push({...p,id,diff}); }
+    else if(diff<=3){ ate3++; total7++; lista3.push({...p,id,diff}); lista7.push({...p,id,diff}); }
+    else if(diff<=7){ ate7++; total7++; lista7.push({...p,id,diff}); }
+  });
+  return {vencidos,ate3,ate7,total7,lista3,lista7};
+}
+
+// Atualiza o badge pulsante no menu
+function atualizarBadgePrazo(){
+  const a=contarAlertasPrazo();
+  const badge=document.getElementById('sb-prazos');
+  if(!badge) return;
+  const criticos=a.vencidos+a.ate3; // vencidos + ≤3 dias merecem pulso
+  if(a.total7>0){
+    badge.textContent=a.total7;
+    badge.style.display='inline-flex';
+    badge.classList.toggle('pulsing', criticos>0);
+  } else {
+    badge.style.display='none';
+    badge.classList.remove('pulsing');
+  }
+}
+
+// Abre a lista prioritária (filtra processos com prazo ≤7d, ordenados por urgência de prazo)
+function abrirAlertasPrazo(){
+  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';STATE.filterPrazo='7';
+  document.querySelectorAll('.unidade-item').forEach(el=>el.classList.remove('active'));
+  document.getElementById('u-TODAS')?.classList.add('active');
+  // limpa filtros de campo que possam mascarar
+  const fs=document.getElementById('f-status'); if(fs) fs.value='';
+  const fu=document.getElementById('f-urgencia'); if(fu) fu.value='';
+  renderTable();
+  showView('processos');
+  const a=contarAlertasPrazo();
+  if(a.total7>0){
+    showToast(`${a.total7} processo(s) com prazo em até 7 dias`+(a.vencidos?` — ${a.vencidos} vencido(s)`:''), a.vencidos||a.ate3?'error':'info');
+  } else {
+    showToast('Nenhum processo com prazo próximo. Tudo em dia.','success');
+  }
+}
+
+// Toast discreto ao entrar no sistema (uma vez por sessão)
+function alertaPrazoEntrada(){
+  const a=contarAlertasPrazo();
+  const criticos=a.vencidos+a.ate3;
+  if(criticos>0){
+    const partes=[];
+    if(a.vencidos) partes.push(`${a.vencidos} vencido(s)`);
+    if(a.ate3) partes.push(`${a.ate3} vencendo em ≤3 dias`);
+    showToast('⚠ Atenção a prazos: '+partes.join(' e ')+'. Veja em "Alertas de Prazo".','error');
+  } else if(a.ate7>0){
+    showToast(`${a.ate7} processo(s) com prazo em até 7 dias.`,'info');
+  }
+}
 function limparFiltros(){
-  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';
+  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';STATE.filterPrazo='';
   document.getElementById('f-status').value='';
   document.getElementById('f-urgencia').value='';
   document.getElementById('f-resp').value='';
@@ -3070,6 +3559,57 @@ function limparFiltros(){
   document.querySelectorAll('.unidade-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('u-TODAS')?.classList.add('active');
   renderTable();
+}
+
+// ========================================
+// BACKUP JSON (Admin only)
+// ========================================
+function exportarBackupJSON(){
+  if(STATE.currentUser?.role!=='admin'){ showToast('Apenas administradores podem exportar backup.','error'); return; }
+
+  // Remove qualquer chave sensível recursivamente (senhas/tokens)
+  const SENSIVEIS=/senha|password|token|hash|pin|secret/i;
+  const limpar=(obj)=>{
+    if(Array.isArray(obj)) return obj.map(limpar);
+    if(obj && typeof obj==='object'){
+      const out={};
+      for(const [k,v] of Object.entries(obj)){
+        if(SENSIVEIS.test(k)) continue; // descarta campo sensível
+        out[k]=limpar(v);
+      }
+      return out;
+    }
+    return obj;
+  };
+
+  const backup={
+    meta:{
+      sistema:'SEI DIGITAL COE — SPAEI/COE-PMERJ',
+      versao:'1.0',
+      geradoEm:new Date().toISOString(),
+      geradoEmBR:new Date().toLocaleString('pt-BR'),
+      geradoPor:STATE.currentUser?.nome||'—',
+      observacao:'Backup completo (processos + membros + configurações). Senhas e tokens NÃO incluídos.'
+    },
+    processos: limpar(STATE.processos||{}),
+    membros: limpar(STATE.membros||{}),
+    admins: limpar(STATE.admins||{}),   // apenas dados não sensíveis (nome/unidade); hashes removidos
+    config: limpar(STATE.config||{}),
+    contadores:{
+      processos:Object.keys(STATE.processos||{}).length,
+      membros:Object.keys(STATE.membros||{}).length,
+      admins:Object.keys(STATE.admins||{}).length
+    }
+  };
+
+  const json=JSON.stringify(backup,null,2);
+  const blob=new Blob([json],{type:'application/json;charset=utf-8'});
+  const ts=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  _baixarBlob(blob,`BACKUP-SEI-DIGITAL-COE-${ts}.json`);
+
+  const info=document.getElementById('backup-info');
+  if(info) info.innerHTML=`<i class="fas fa-check-circle" style="color:var(--emerald)"></i> Backup gerado: ${backup.contadores.processos} processos, ${backup.contadores.membros} membros, ${backup.contadores.admins} admins.`;
+  showToast('Backup .json baixado com sucesso.','success');
 }
 
 // ========================================
@@ -3105,12 +3645,12 @@ function exportCSV(){
 // VIEWS
 // ========================================
 function showView(v){
-  const VTITLES={'processos':'Processos SEI','dashboard':'Dashboard Analytics','spaei-sync':'Integração SPAEI','admin':'Painel Admin','perfil':'Meu Perfil'};
+  const VTITLES={'processos':'Processos SEI','dashboard':'Dashboard Analytics','spaei-sync':'Integração SPAEI','admin':'Painel Admin','perfil':'Meu Perfil','relatorios':'Central de Relatórios'};
   const tvt=document.getElementById('topbar-view-title');
   if(tvt) tvt.textContent=VTITLES[v]||v;
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
   document.getElementById('view-'+v)?.classList.add('active');
-  ['processos','dashboard','spaei-sync','admin','perfil'].forEach(n=>{
+  ['processos','dashboard','spaei-sync','admin','perfil','relatorios'].forEach(n=>{
     document.getElementById('nav-'+n)?.classList.remove('active');
   });
   document.getElementById('nav-'+v)?.classList.add('active');
@@ -3118,6 +3658,7 @@ function showView(v){
   if(v==='dashboard'){renderDashboard();updateDashDate();}
   if(v==='spaei-sync') renderSPAEIView();
   if(v==='admin') renderMembros();
+  if(v==='relatorios') initRelatorios();
 }
 
 // ========================================
@@ -3329,7 +3870,7 @@ function renderMembrosCarga(){
 }
 
 function filtrarResp(nome){
-  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';
+  STATE.filterUnidade='TODAS';STATE.filterStatus='';STATE.filterUrgencia='';STATE.filterPrazo='';
   document.getElementById('f-resp').value=nome;
   renderTable();showView('processos');
 }
@@ -3345,6 +3886,794 @@ window.renderDashboard=function(){
   const isDashActive=document.getElementById('view-dashboard')?.classList.contains('active');
   if(isDashActive) setTimeout(renderCharts,80);
 };
+
+// ========================================
+// RELATÓRIOS
+// ========================================
+let REL = { tipo:null, dados:null }; // estado do relatório corrente
+
+const REL_TITULOS = {
+  membro:'Relatório por Responsável', unidade:'Relatório por Unidade',
+  status:'Relatório por Status', periodo:'Relatório por Período',
+  semanal:'Relatório Semanal', mensal:'Relatório Mensal', geral:'Relatório Geral'
+};
+
+// Inicializa a view (popula select de responsáveis a partir do STATE)
+function initRelatorios(){
+  const sel = document.getElementById('rel-membro');
+  if(sel){
+    const resps = new Set();
+    Object.values(STATE.processos).forEach(p=>(p.responsaveis||[]).forEach(r=>r&&resps.add(r)));
+    const atual = sel.value;
+    sel.innerHTML = '<option value="">Todos os responsáveis</option>' +
+      [...resps].sort().map(r=>`<option>${r}</option>`).join('');
+    if(atual) sel.value = atual;
+  }
+  // Rótulos dinâmicos dos botões rápidos
+  const sw=_intervaloSemana(), sm=_intervaloMes();
+  const ls=document.getElementById('rel-quick-semana-lbl');
+  if(ls) ls.textContent=`Semana vigente: ${sw.ini.toLocaleDateString('pt-BR')} a ${sw.fim.toLocaleDateString('pt-BR')}`;
+  const lm=document.getElementById('rel-quick-mes-lbl');
+  if(lm) lm.textContent=`Mês vigente: ${sm.ini.toLocaleDateString('pt-BR',{month:'long',year:'numeric'})} · resumo executivo`;
+  renderRankingRelatorios();
+}
+
+// Ranking de carga por responsável (processos ativos) — usado na aba Relatórios
+function renderRankingRelatorios(){
+  const cont=document.getElementById('rel-ranking');
+  if(!cont) return;
+  const concl=['Finalizado','Cancelado','Encerrado','Baixado'];
+  const map={};
+  Object.values(STATE.processos).forEach(p=>{
+    if(concl.includes(p.status)) return;
+    (p.responsaveis||[]).forEach(r=>{map[r]=(map[r]||0)+1});
+  });
+  const entries=Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  const max=entries[0]?.[1]||1;
+  if(!entries.length){ cont.innerHTML='<div style="color:var(--text-dim);font-size:.78rem">Nenhum responsável com processos ativos.</div>'; return; }
+  cont.innerHTML=`<div class="rank-list">`+entries.map(([nome,cnt],i)=>{
+    const pct=Math.round((cnt/max)*100);
+    const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
+    return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${nome}">
+      <div class="rank-pos">${i+1}</div>
+      <div class="rank-av">${init}</div>
+      <div class="rank-nome" title="${nome}">${nome}</div>
+      <div class="rank-track"><div class="rank-fill" style="width:${pct}%"></div></div>
+      <div class="rank-count">${cnt}</div>
+    </div>`;
+  }).join('')+`</div>`;
+}
+
+// Seleciona um tipo de relatório e revela os filtros pertinentes
+function selecionarRelatorio(tipo, card){
+  REL.tipo = tipo;
+  document.querySelectorAll('.rel-card').forEach(c=>c.classList.remove('active'));
+  if(card) card.classList.add('active');
+  document.getElementById('rel-config').style.display='block';
+  document.getElementById('rel-preview-wrap').style.display='none';
+  document.getElementById('rel-config-title').textContent = REL_TITULOS[tipo]||'Configurar Relatório';
+
+  // Esconde todos os campos específicos
+  ['rel-fld-membro','rel-fld-unidade','rel-fld-status','rel-fld-dtini','rel-fld-dtfim']
+    .forEach(id=>document.getElementById(id).style.display='none');
+
+  if(tipo==='membro') document.getElementById('rel-fld-membro').style.display='block';
+  if(tipo==='unidade') document.getElementById('rel-fld-unidade').style.display='block';
+  if(tipo==='status') document.getElementById('rel-fld-status').style.display='block';
+  if(tipo==='periodo'){ document.getElementById('rel-fld-dtini').style.display='block'; document.getElementById('rel-fld-dtfim').style.display='block'; }
+  // semanal, mensal e geral não exigem campo específico
+
+  document.getElementById('rel-config').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function cancelarRelatorio(){
+  REL={tipo:null,dados:null};
+  document.querySelectorAll('.rel-card').forEach(c=>c.classList.remove('active'));
+  document.getElementById('rel-config').style.display='none';
+  document.getElementById('rel-preview-wrap').style.display='none';
+}
+
+// Detecta categoria "licitação/aquisição"
+function _isLicitacao(p){
+  const t=((p.descricao||'')+' '+(p.observacoes||'')).toLowerCase();
+  return /aquisi|licita|contrata|\betp\b|\btr\b|\bdfd\b|\bdod\b|\birp\b|registro de pre|ata de|pesquisa de pre|termo de refer/.test(t);
+}
+
+// Converte dd/mm/aaaa -> Date (ou null)
+function _parseBR(d){
+  if(!d) return null;
+  const m=String(d).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? new Date(+m[3],+m[2]-1,+m[1]) : null;
+}
+
+// Coleta e filtra processos conforme o tipo + filtros combináveis
+// ---- Helpers de datas (client-side, sem libs) ----
+
+// Intervalo da semana vigente: segunda 00:00 a domingo 23:59
+function _intervaloSemana(base){
+  const h = base ? new Date(base) : new Date();
+  const dow = (h.getDay()+6)%7;            // 0=segunda ... 6=domingo
+  const ini = new Date(h); ini.setDate(h.getDate()-dow); ini.setHours(0,0,0,0);
+  const fim = new Date(ini); fim.setDate(ini.getDate()+6); fim.setHours(23,59,59,999);
+  return {ini,fim};
+}
+
+// Intervalo do mês vigente
+function _intervaloMes(base){
+  const h = base ? new Date(base) : new Date();
+  const ini = new Date(h.getFullYear(), h.getMonth(), 1, 0,0,0,0);
+  const fim = new Date(h.getFullYear(), h.getMonth()+1, 0, 23,59,59,999);
+  return {ini,fim};
+}
+
+// Último dia ÚTIL do mês (seg–sex; feriados ignorados por ora)
+function _ultimoDiaUtilDoMes(base){
+  const h = base ? new Date(base) : new Date();
+  let d = new Date(h.getFullYear(), h.getMonth()+1, 0); // último dia do mês
+  while(d.getDay()===0 || d.getDay()===6){ d.setDate(d.getDate()-1); } // recua sáb/dom
+  d.setHours(0,0,0,0);
+  return d;
+}
+function _ehUltimoDiaUtilDoMes(base){
+  const h = base ? new Date(base) : new Date();
+  const u = _ultimoDiaUtilDoMes(h);
+  return h.getFullYear()===u.getFullYear() && h.getMonth()===u.getMonth() && h.getDate()===u.getDate();
+}
+
+// Parse do timestamp do histórico ("dd/mm/aaaa HH:MM" ou "dd/mm/aaaa")
+function _parseHistData(s){
+  if(!s) return null;
+  const m=String(s).match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+  return m ? new Date(+m[3],+m[2]-1,+m[1],+(m[4]||0),+(m[5]||0)) : null;
+}
+
+// Retorna Date de "atualização" priorizando dataAtualizacao (dd/mm/aaaa),
+// caindo para dataModificacao (timestamp ms)
+function _dataAtualizacaoDate(p){
+  return _parseBR(p.dataAtualizacao) || (p.dataModificacao ? new Date(p.dataModificacao) : null);
+}
+function _dentro(d,ini,fim){ return d && d>=ini && d<=fim; }
+
+// Analisa uma lista dentro de um intervalo e devolve as seções inteligentes
+// usadas nos relatórios semanal e mensal.
+function _analiseIntervalo(lista, ini, fim){
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const finalizados_status = ['Finalizado','Encerrado','Baixado'];
+
+  const criados = lista.filter(p=>{
+    const d = p.dataCriacao ? new Date(p.dataCriacao) : null;
+    return _dentro(d,ini,fim);
+  });
+  const atualizados = lista.filter(p=> _dentro(_dataAtualizacaoDate(p),ini,fim));
+  const finalizados = lista.filter(p=>
+    finalizados_status.includes(p.status) && _dentro(_dataAtualizacaoDate(p),ini,fim)
+  );
+  // Mudança de status na janela: procura evento no histórico mencionando status/andamento
+  const mudancaStatus = lista.filter(p=>
+    (p.historico||[]).some(h=>{
+      const d=_parseHistData(h.data);
+      return _dentro(d,ini,fim) && /status|andamento|aguard|finaliz|encerr|baix|cancel|reabert/i.test(h.texto||'');
+    })
+  );
+  // Prazos vencidos (prazo < hoje e não concluído) — independem da janela, mas úteis no período
+  const prazosVencidos = lista.filter(p=>{
+    if(!p.prazo) return false;
+    const dp=_parsePrazo(p.prazo);
+    return dp<hoje && !finalizados_status.includes(p.status) && p.status!=='Cancelado';
+  });
+  // Prazos que vencem DENTRO da janela
+  const prazosNaJanela = lista.filter(p=>{
+    if(!p.prazo) return false;
+    const dp=_parsePrazo(p.prazo);
+    return _dentro(dp,ini,fim);
+  });
+  const criticos = lista.filter(p=> p.urgencia==='Crítica' &&
+    (finalizados_status.includes(p.status)?false:true));
+
+  // A "movimentação" da janela = união de criados + atualizados (dedup por id)
+  const movIds = new Set([...criados,...atualizados].map(p=>p.id));
+  const movimentacao = lista.filter(p=>movIds.has(p.id));
+
+  return {criados,atualizados,finalizados,mudancaStatus,prazosVencidos,prazosNaJanela,criticos,movimentacao};
+}
+
+// Quantitativo por membro (responsável)
+function _porMembro(lista){
+  const map={};
+  lista.forEach(p=>{
+    const rs=(p.responsaveis||[]);
+    if(rs.length===0){ map['(sem responsável)']=(map['(sem responsável)']||0)+1; }
+    else rs.forEach(r=>{ map[r]=(map[r]||0)+1; });
+  });
+  return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+}
+
+function coletarProcessosRelatorio(){
+  let lista = Object.entries(STATE.processos).map(([id,v])=>({...v,id}));
+
+  // Filtros combináveis (aplicam a todos os tipos)
+  const fUrg = document.getElementById('rel-f-urgencia').value;
+  const fPca = document.getElementById('rel-f-pca').value;
+  const fCat = document.getElementById('rel-f-categoria').value;
+  const fDup = document.getElementById('rel-f-dup').value;
+  if(fDup==='excluir') lista = lista.filter(p=>!p.duplicata);
+  if(fUrg) lista = lista.filter(p=>p.urgencia===fUrg);
+  if(fPca) lista = lista.filter(p=>p.pca===fPca);
+  if(fCat==='licitacao') lista = lista.filter(_isLicitacao);
+  if(fCat==='demais') lista = lista.filter(p=>!_isLicitacao(p));
+
+  // Filtro específico do tipo
+  const t = REL.tipo;
+  let escopo = '';
+  let janela = null; // {ini,fim} para semanal/mensal
+  if(t==='membro'){
+    const m=document.getElementById('rel-membro').value;
+    if(m){ lista=lista.filter(p=>(p.responsaveis||[]).includes(m)); escopo='Responsável: '+m; }
+    else escopo='Todos os responsáveis';
+  } else if(t==='unidade'){
+    const u=document.getElementById('rel-unidade').value;
+    if(u){ lista=lista.filter(p=>p.unidade===u); escopo='Unidade: '+u; }
+    else escopo='Todas as Unidades';
+  } else if(t==='status'){
+    const s=document.getElementById('rel-status').value;
+    if(s){ lista=lista.filter(p=>p.status===s); escopo='Status: '+s; }
+    else escopo='Todos os status';
+  } else if(t==='periodo' || t==='semanal' || t==='mensal'){
+    let ini,fim;
+    if(t==='periodo'){
+      const di=document.getElementById('rel-dtini').value, df=document.getElementById('rel-dtfim').value;
+      ini = di?new Date(di+'T00:00:00'):null;
+      fim = df?new Date(df+'T23:59:59'):null;
+      escopo='Período: '+(di?di.split('-').reverse().join('/'):'—')+' a '+(df?df.split('-').reverse().join('/'):'—');
+      lista=lista.filter(p=>{
+        const d=_dataAtualizacaoDate(p);
+        if(!d) return false;
+        if(ini && d<ini) return false;
+        if(fim && d>fim) return false;
+        return true;
+      });
+    } else if(t==='semanal'){
+      ({ini,fim}=_intervaloSemana());
+      escopo='Semana vigente: '+ini.toLocaleDateString('pt-BR')+' a '+fim.toLocaleDateString('pt-BR');
+      janela={ini,fim};
+      // Movimentação = criados OU atualizados na semana
+      lista=lista.filter(p=>{
+        const dc=p.dataCriacao?new Date(p.dataCriacao):null;
+        const da=_dataAtualizacaoDate(p);
+        return _dentro(dc,ini,fim) || _dentro(da,ini,fim);
+      });
+    } else { // mensal
+      ({ini,fim}=_intervaloMes());
+      escopo='Mês vigente: '+ini.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+      janela={ini,fim};
+      lista=lista.filter(p=>{
+        const dc=p.dataCriacao?new Date(p.dataCriacao):null;
+        const da=_dataAtualizacaoDate(p);
+        return _dentro(dc,ini,fim) || _dentro(da,ini,fim);
+      });
+    }
+  } else { // geral
+    escopo='Todos os processos (filtros aplicados)';
+  }
+
+  // Ordenação: unidade -> urgência -> número
+  const urgMap={'Crítica':0,'Alta':1,'Normal':2,'Baixa':3};
+  lista.sort((a,b)=> (a.unidade||'').localeCompare(b.unidade||'') || (urgMap[a.urgencia]??2)-(urgMap[b.urgencia]??2) || (a.numero||'').localeCompare(b.numero||''));
+
+  return { lista, escopo, janela };
+}
+
+// Quantitativos
+function _quantitativos(lista){
+  const q={total:lista.length,porStatus:{},porUnidade:{},porUrgencia:{},licitacao:0,demais:0};
+  lista.forEach(p=>{
+    q.porStatus[p.status||'—']=(q.porStatus[p.status||'—']||0)+1;
+    q.porUnidade[p.unidade||'—']=(q.porUnidade[p.unidade||'—']||0)+1;
+    q.porUrgencia[p.urgencia||'Normal']=(q.porUrgencia[p.urgencia||'Normal']||0)+1;
+    _isLicitacao(p)?q.licitacao++:q.demais++;
+  });
+  return q;
+}
+
+// Gera código de recuperação único: SEI-COE-AAAA-MM-Wnn-XXXX
+function _gerarCodigoRecuperacao(){
+  const now=new Date();
+  const ano=now.getFullYear(), mes=String(now.getMonth()+1).padStart(2,'0');
+  const jan1=new Date(now.getFullYear(),0,1);
+  const wk=String(Math.ceil((((now-jan1)/86400000)+jan1.getDay()+1)/7)).padStart(2,'0');
+  const rnd=Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
+  return `SEI-COE-${ano}-${mes}-W${wk}-${rnd}`;
+}
+
+// Monta o objeto de relatório (dados) usado por todas as exportações
+function gerarPreviewRelatorio(){
+  if(!REL.tipo){ showToast('Selecione um tipo de relatório.','error'); return; }
+  const {lista,escopo,janela}=coletarProcessosRelatorio();
+  const q=_quantitativos(lista);
+  const codigo=_gerarCodigoRecuperacao();
+  const now=new Date();
+
+  // Seções inteligentes (semanal/mensal)
+  let analise=null, porMembro=null, resumo=null;
+  if((REL.tipo==='semanal' || REL.tipo==='mensal') && janela){
+    analise=_analiseIntervalo(lista, janela.ini, janela.fim);
+    porMembro=_porMembro(lista);
+    if(REL.tipo==='mensal'){
+      resumo=_resumoExecutivo(lista, analise, janela);
+    }
+  }
+
+  REL.dados={
+    tipo:REL.tipo, titulo:REL_TITULOS[REL.tipo], escopo, lista, q, codigo, janela, analise, porMembro, resumo,
+    geradoPor: STATE.currentUser?.nome || 'Desconhecido',
+    dataHora: now.toLocaleString('pt-BR'),
+    filtros:{
+      urgencia:document.getElementById('rel-f-urgencia').value||null,
+      pca:document.getElementById('rel-f-pca').value||null,
+      categoria:document.getElementById('rel-f-categoria').value||null,
+      duplicatas:document.getElementById('rel-f-dup').value
+    }
+  };
+  renderPreviewRelatorio();
+  salvarSnapshotRelatorio(); // salva snapshot leve no Firebase
+  document.getElementById('rel-preview-wrap').style.display='block';
+  document.getElementById('rel-preview-wrap').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// Resumo executivo textual (mensal)
+function _resumoExecutivo(lista, a, janela){
+  const mesNome = janela.ini.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  const topUnidade = Object.entries(_quantitativos(lista).porUnidade).sort((x,y)=>y[1]-x[1])[0];
+  const linhas=[
+    `No mês de ${mesNome}, foram registradas ${lista.length} movimentações de processos no âmbito do COE e unidades subordinadas.`,
+    `Destas, ${a.criados.length} referem-se a processos abertos no período e ${a.atualizados.length} a processos atualizados.`,
+    `Foram concluídos (finalizados/encerrados/baixados) ${a.finalizados.length} processos.`,
+    topUnidade ? `A unidade com maior volume de movimentação foi ${topUnidade[0]} (${topUnidade[1]} processos).` : '',
+    a.prazosVencidos.length ? `Atenção: ${a.prazosVencidos.length} processo(s) encontram-se com prazo vencido e pendentes de conclusão.` : `Não há processos com prazo vencido pendentes no período.`,
+    a.criticos.length ? `${a.criticos.length} processo(s) estão classificados como de urgência crítica.` : ''
+  ].filter(Boolean);
+  return linhas;
+}
+
+// ---- Lembretes visuais inteligentes (client-side, sem Cloud Functions) ----
+
+// Chave de deduplicação por dia (não repetir o mesmo aviso no mesmo dia)
+function _chaveLembrete(tipo){
+  const h=new Date();
+  return `sei_lembrete_${tipo}_${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`;
+}
+function _lembreteJaVisto(tipo){
+  try{ return localStorage.getItem(_chaveLembrete(tipo))==='1'; }catch(e){ return false; }
+}
+function _marcarLembreteVisto(tipo){
+  try{ localStorage.setItem(_chaveLembrete(tipo),'1'); }catch(e){}
+}
+
+// Verifica condições e exibe banner discreto. Só para admin.
+function verificarLembretesRelatorio(){
+  if(STATE.currentUser?.role!=='admin') return;
+  const h=new Date();
+  const dia=h.getDay();       // 0=dom ... 5=sex ... 6=sáb
+  const hora=h.getHours();
+
+  // Semanal: sexta-feira após 17h
+  if(dia===5 && hora>=17 && !_lembreteJaVisto('semanal')){
+    mostrarLembreteRelatorio('semanal',
+      'Relatório semanal disponível',
+      'A semana está fechando. Clique para gerar o relatório da semana atual.');
+    return; // um aviso por vez
+  }
+
+  // Mensal: último dia útil do mês (qualquer hora)
+  if(_ehUltimoDiaUtilDoMes(h) && !_lembreteJaVisto('mensal')){
+    mostrarLembreteRelatorio('mensal',
+      'Relatório mensal de backup disponível',
+      'Hoje é o último dia útil do mês. Clique para gerar o relatório mensal de backup.');
+  }
+}
+
+function mostrarLembreteRelatorio(tipo,titulo,msg){
+  // Remove banner anterior, se houver
+  document.getElementById('rel-reminder')?.remove();
+  const div=document.createElement('div');
+  div.className='rel-reminder';
+  div.id='rel-reminder';
+  div.innerHTML=`
+    <div class="ri-ico"><i class="fas fa-${tipo==='semanal'?'calendar-week':'calendar-days'}"></i></div>
+    <div class="ri-txt"><b>${titulo}</b><br>${msg}</div>
+    <button class="ri-close" title="Dispensar"><i class="fas fa-times"></i></button>`;
+  // Clique no corpo → abre relatórios e gera automaticamente
+  div.addEventListener('click',(e)=>{
+    if(e.target.closest('.ri-close')) return;
+    _marcarLembreteVisto(tipo);
+    div.remove();
+    showView('relatorios');
+    setTimeout(()=>gerarRelatorioRapido(tipo),400);
+  });
+  // Botão fechar → apenas dispensa (marca como visto no dia)
+  div.querySelector('.ri-close').addEventListener('click',(e)=>{
+    e.stopPropagation();
+    _marcarLembreteVisto(tipo);
+    div.remove();
+  });
+  document.body.appendChild(div);
+}
+
+// Atalho de 1 clique: seleciona tipo, marca o card e gera preview
+function gerarRelatorioRapido(tipo){
+  const card=[...document.querySelectorAll('.rel-card')].find(c=>c.getAttribute('onclick')?.includes(`'${tipo}'`));
+  selecionarRelatorio(tipo, card);
+  gerarPreviewRelatorio();
+}
+
+// Renderiza HTML da pré-visualização
+function renderPreviewRelatorio(){
+  const d=REL.dados; if(!d) return;
+  const kpiStatus=Object.entries(d.q.porStatus).sort((a,b)=>b[1]-a[1]);
+  let html=`
+    <h1>POLÍCIA MILITAR DO ESTADO DO RIO DE JANEIRO</h1>
+    <h2>COMANDO DE OPERAÇÕES ESPECIAIS — SEI DIGITAL COE</h2>
+    <div class="rel-meta">
+      ${d.titulo} &nbsp;|&nbsp; ${d.escopo}<br>
+      Gerado em ${d.dataHora} por ${d.geradoPor}
+    </div>
+    <div class="rel-kpis">
+      <div class="rel-kpi"><b>${d.q.total}</b><span>Processos</span></div>
+      <div class="rel-kpi"><b>${d.q.porStatus['Em Andamento']||0}</b><span>Em Andamento</span></div>
+      <div class="rel-kpi"><b>${d.q.porStatus['Aguardando']||0}</b><span>Aguardando</span></div>
+      <div class="rel-kpi"><b>${d.q.licitacao}</b><span>Licitação/Aquis.</span></div>
+      <div class="rel-kpi"><b>${d.q.porUrgencia['Crítica']||0}</b><span>Críticos</span></div>
+    </div>`;
+
+  // Quadro por status
+  html+=`<h3>Quantitativo por Status</h3><table><tr><th>Status</th><th>Qtd.</th></tr>`;
+  kpiStatus.forEach(([s,n])=>html+=`<tr><td>${s}</td><td>${n}</td></tr>`);
+  html+=`</table>`;
+
+  // Quadro por unidade (se fizer sentido)
+  const uns=Object.entries(d.q.porUnidade).sort((a,b)=>b[1]-a[1]);
+  if(uns.length>1){
+    html+=`<h3>Quantitativo por Unidade</h3><table><tr><th>Unidade</th><th>Qtd.</th></tr>`;
+    uns.forEach(([u,n])=>html+=`<tr><td>${u}</td><td>${n}</td></tr>`);
+    html+=`</table>`;
+  }
+
+  // ---- Seções inteligentes (semanal / mensal) ----
+  if(d.resumo && d.resumo.length){
+    html+=`<h3>Resumo Executivo</h3><div style="background:#f6f8fb;border:1px solid #dbe2ee;border-radius:6px;padding:12px 14px;line-height:1.55">`;
+    d.resumo.forEach(l=>html+=`<p style="margin:0 0 6px">• ${l}</p>`);
+    html+=`</div>`;
+  }
+
+  if(d.analise){
+    const a=d.analise;
+    html+=`<h3>Movimentação do Período</h3>
+      <div class="rel-kpis">
+        <div class="rel-kpi"><b>${a.criados.length}</b><span>Criados</span></div>
+        <div class="rel-kpi"><b>${a.atualizados.length}</b><span>Atualizados</span></div>
+        <div class="rel-kpi"><b>${a.finalizados.length}</b><span>Concluídos</span></div>
+        <div class="rel-kpi"><b>${a.mudancaStatus.length}</b><span>Mud. Status</span></div>
+        <div class="rel-kpi"><b>${a.prazosVencidos.length}</b><span>Prazos Vencidos</span></div>
+        <div class="rel-kpi"><b>${a.criticos.length}</b><span>Críticos</span></div>
+      </div>`;
+
+    const bloco=(titulo,arr,extra)=>{
+      if(!arr.length) return '';
+      let s=`<h3>${titulo} (${arr.length})</h3><table><tr><th>Número SEI</th><th>Descrição</th><th>Un.</th><th>Status</th>${extra?'<th>'+extra+'</th>':''}</tr>`;
+      arr.forEach(p=>{
+        let ex='';
+        if(extra==='Prazo') ex=`<td>${p.prazo?_parsePrazo(p.prazo).toLocaleDateString('pt-BR'):'—'}</td>`;
+        else if(extra) ex=`<td>${p.urgencia||'—'}</td>`;
+        s+=`<tr><td>${p.numero||'—'}</td><td>${p.descricao||'—'}</td><td>${p.unidade||'—'}</td><td>${p.status||'—'}</td>${ex}</tr>`;
+      });
+      return s+`</table>`;
+    };
+    html+=bloco('Processos Criados no Período', a.criados);
+    html+=bloco('Processos Concluídos no Período', a.finalizados);
+    html+=bloco('Mudanças de Status no Período', a.mudancaStatus);
+    html+=bloco('Prazos Vencidos (pendentes)', a.prazosVencidos,'Prazo');
+    if(a.prazosNaJanela && a.prazosNaJanela.length) html+=bloco('Prazos que Vencem no Período', a.prazosNaJanela,'Prazo');
+    html+=bloco('Processos Críticos', a.criticos,'Urg.');
+  }
+
+  // Quantitativo por membro (semanal/mensal)
+  if(d.porMembro && d.porMembro.length){
+    html+=`<h3>Quantitativo por Responsável</h3><table><tr><th>Responsável</th><th>Qtd.</th></tr>`;
+    d.porMembro.forEach(([m,n])=>html+=`<tr><td>${m}</td><td>${n}</td></tr>`);
+    html+=`</table>`;
+  }
+
+  // Lista detalhada
+  const _lblLista=(d.tipo==='semanal'||d.tipo==='mensal')?'Movimentação Detalhada':'Processos';
+  html+=`<h3>${_lblLista} (${d.lista.length})</h3><table>
+    <tr><th>#</th><th>Número SEI</th><th>Descrição</th><th>Un.</th><th>Status</th><th>Urg.</th><th>Atualiz.</th></tr>`;
+  d.lista.forEach((p,i)=>{
+    html+=`<tr>
+      <td>${i+1}</td>
+      <td>${p.numero||'—'}</td>
+      <td>${(p.descricao||'—')}${p.responsaveis&&p.responsaveis.length?'<br><i style="color:#888">Resp.: '+p.responsaveis.join(', ')+'</i>':''}</td>
+      <td>${p.unidade||'—'}</td>
+      <td>${p.status||'—'}</td>
+      <td>${p.urgencia||'—'}</td>
+      <td>${p.dataAtualizacao||'—'}</td>
+    </tr>`;
+  });
+  html+=`</table>`;
+
+  html+=`<div class="rel-foot">
+    <b>Código de Recuperação:</b> <span class="rel-cod">${d.codigo}</span><br>
+    Em caso de perda de dados, utilize este código no painel <b>Admin → Restaurar Snapshot</b>.<br>
+    Documento gerado eletronicamente pelo sistema SEI DIGITAL COE — SPAEI/COE-PMERJ.
+  </div>`;
+  document.getElementById('rel-preview').innerHTML=html;
+}
+
+// Salva snapshot LEVE no Firebase: /sei-digital/backups/{codigo}
+async function salvarSnapshotRelatorio(){
+  const d=REL.dados; if(!d) return;
+  const snap={
+    codigo:d.codigo,
+    data:Date.now(),
+    dataHora:d.dataHora,
+    geradoPor:d.geradoPor,
+    tipo:d.tipo,
+    titulo:d.titulo,
+    escopo:d.escopo,
+    filtros:d.filtros,
+    quantitativos:{ total:d.q.total, porStatus:d.q.porStatus, porUnidade:d.q.porUnidade, porUrgencia:d.q.porUrgencia, licitacao:d.q.licitacao, demais:d.q.demais },
+    processosIds:d.lista.map(p=>p.id)
+  };
+  // Janela + análise resumida (apenas contagens e IDs — leve)
+  if(d.janela){ snap.janela={ini:d.janela.ini.getTime(), fim:d.janela.fim.getTime()}; }
+  if(d.analise){
+    const a=d.analise;
+    snap.analise={
+      criados:a.criados.length, atualizados:a.atualizados.length, finalizados:a.finalizados.length,
+      mudancaStatus:a.mudancaStatus.length, prazosVencidos:a.prazosVencidos.length, criticos:a.criticos.length,
+      criadosIds:a.criados.map(p=>p.id), finalizadosIds:a.finalizados.map(p=>p.id),
+      prazosVencidosIds:a.prazosVencidos.map(p=>p.id), criticosIds:a.criticos.map(p=>p.id)
+    };
+  }
+  if(d.porMembro) snap.porMembro=Object.fromEntries(d.porMembro);
+  try{
+    // 1) backup por código (compat. c/ restauração já prevista)
+    await db.ref('/sei-digital/backups/'+d.codigo).set(snap);
+    // 2) organizado por tipo: /sei-digital/relatorios/{tipo}/{codigo}
+    await db.ref('/sei-digital/relatorios/'+d.tipo+'/'+d.codigo).set(snap);
+  }catch(e){ console.warn('Snapshot não salvo (offline):',e); }
+}
+
+// ---- Exportações ----
+
+// Nome de arquivo padronizado
+function _relFilename(ext){
+  const d=REL.dados;
+  return `RELATORIO-SEI-COE-${(d?.tipo||'geral').toUpperCase()}-${d?.codigo||''}.${ext}`;
+}
+
+// CSV
+function exportarRelatorioCSV(){
+  const d=REL.dados; if(!d) return;
+  const head=['#','Numero SEI','Descricao','Unidade','Status','Urgencia','PCA','Responsaveis','Atualizacao','Observacoes'];
+  const rows=d.lista.map((p,i)=>[
+    i+1, p.numero||'', (p.descricao||'').replace(/"/g,'""'), p.unidade||'', p.status||'',
+    p.urgencia||'', p.pca||'', (p.responsaveis||[]).join('; '), p.dataAtualizacao||'', (p.observacoes||'').replace(/"/g,'""')
+  ]);
+  const csv=[head, ...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  _baixarBlob(blob,_relFilename('csv'));
+  showToast('CSV exportado.','success');
+}
+
+// Markdown
+function exportarRelatorioMD(){
+  const d=REL.dados; if(!d) return;
+  let md=`# POLÍCIA MILITAR DO ESTADO DO RIO DE JANEIRO\n`;
+  md+=`## COMANDO DE OPERAÇÕES ESPECIAIS — SEI DIGITAL COE\n\n`;
+  md+=`**${d.titulo}** — ${d.escopo}\n\n`;
+  md+=`Gerado em ${d.dataHora} por ${d.geradoPor}\n\n---\n\n`;
+  md+=`### Quantitativos\n\n`;
+  md+=`| Indicador | Valor |\n|---|---|\n`;
+  md+=`| Total de processos | ${d.q.total} |\n`;
+  Object.entries(d.q.porStatus).forEach(([s,n])=>md+=`| ${s} | ${n} |\n`);
+  md+=`| Licitação/Aquisição | ${d.q.licitacao} |\n| Demais | ${d.q.demais} |\n\n`;
+  if(Object.keys(d.q.porUnidade).length>1){
+    md+=`### Por Unidade\n\n| Unidade | Qtd. |\n|---|---|\n`;
+    Object.entries(d.q.porUnidade).sort((a,b)=>b[1]-a[1]).forEach(([u,n])=>md+=`| ${u} | ${n} |\n`);
+    md+=`\n`;
+  }
+
+  // Seções inteligentes (semanal/mensal)
+  if(d.resumo && d.resumo.length){
+    md+=`### Resumo Executivo\n\n`;
+    d.resumo.forEach(l=>md+=`- ${l}\n`);
+    md+=`\n`;
+  }
+  if(d.analise){
+    const a=d.analise;
+    md+=`### Movimentação do Período\n\n| Indicador | Valor |\n|---|---|\n`;
+    md+=`| Criados | ${a.criados.length} |\n| Atualizados | ${a.atualizados.length} |\n| Concluídos | ${a.finalizados.length} |\n`;
+    md+=`| Mudanças de status | ${a.mudancaStatus.length} |\n| Prazos vencidos | ${a.prazosVencidos.length} |\n| Críticos | ${a.criticos.length} |\n\n`;
+    const secMd=(titulo,arr,extra)=>{
+      if(!arr.length) return;
+      md+=`#### ${titulo} (${arr.length})\n\n| Número SEI | Descrição | Un. | Status |${extra?' '+extra+' |':''}\n|---|---|---|---|${extra?'---|':''}\n`;
+      arr.forEach(p=>{
+        let ex='';
+        if(extra==='Prazo') ex=' '+(p.prazo?_parsePrazo(p.prazo).toLocaleDateString('pt-BR'):'—')+' |';
+        else if(extra) ex=' '+(p.urgencia||'—')+' |';
+        md+=`| ${p.numero||'—'} | ${(p.descricao||'—').replace(/\|/g,'\\|')} | ${p.unidade||'—'} | ${p.status||'—'} |${ex}\n`;
+      });
+      md+=`\n`;
+    };
+    secMd('Processos Criados no Período', a.criados);
+    secMd('Processos Concluídos no Período', a.finalizados);
+    secMd('Mudanças de Status no Período', a.mudancaStatus);
+    secMd('Prazos Vencidos (pendentes)', a.prazosVencidos,'Prazo');
+    if(a.prazosNaJanela && a.prazosNaJanela.length) secMd('Prazos que Vencem no Período', a.prazosNaJanela,'Prazo');
+    secMd('Processos Críticos', a.criticos,'Urg.');
+  }
+  if(d.porMembro && d.porMembro.length){
+    md+=`### Quantitativo por Responsável\n\n| Responsável | Qtd. |\n|---|---|\n`;
+    d.porMembro.forEach(([m,n])=>md+=`| ${m} | ${n} |\n`);
+    md+=`\n`;
+  }
+
+  const _lblMd=(d.tipo==='semanal'||d.tipo==='mensal')?'Movimentação Detalhada':'Processos';
+  md+=`### ${_lblMd} (${d.lista.length})\n\n`;
+  md+=`| # | Número SEI | Descrição | Un. | Status | Urg. | Atualiz. |\n|---|---|---|---|---|---|---|\n`;
+  d.lista.forEach((p,i)=>{
+    md+=`| ${i+1} | ${p.numero||'—'} | ${(p.descricao||'—').replace(/\|/g,'\\|')} | ${p.unidade||'—'} | ${p.status||'—'} | ${p.urgencia||'—'} | ${p.dataAtualizacao||'—'} |\n`;
+  });
+  md+=`\n---\n\n**Código de Recuperação:** \`${d.codigo}\`\n\n`;
+  md+=`> Em caso de perda de dados, utilize este código no painel **Admin → Restaurar Snapshot**.\n\n`;
+  md+=`_Documento gerado eletronicamente pelo sistema SEI DIGITAL COE — SPAEI/COE-PMERJ._\n`;
+  const blob=new Blob([md],{type:'text/markdown;charset=utf-8'});
+  _baixarBlob(blob,_relFilename('md'));
+  showToast('Markdown exportado.','success');
+}
+
+// PDF (pdfmake)
+function exportarRelatorioPDF(){
+  const d=REL.dados; if(!d) return;
+  if(typeof pdfMake==='undefined'){ showToast('Biblioteca PDF não carregada. Verifique a conexão.','error'); return; }
+
+  const statusRows=[[{text:'Status',style:'th'},{text:'Qtd.',style:'th'}]];
+  Object.entries(d.q.porStatus).sort((a,b)=>b[1]-a[1]).forEach(([s,n])=>statusRows.push([s,String(n)]));
+
+  const unRows=[[{text:'Unidade',style:'th'},{text:'Qtd.',style:'th'}]];
+  Object.entries(d.q.porUnidade).sort((a,b)=>b[1]-a[1]).forEach(([u,n])=>unRows.push([u,String(n)]));
+
+  // Tabela de processos (paginada automaticamente pelo pdfmake)
+  const procHead=[
+    {text:'#',style:'th'},{text:'Número SEI',style:'th'},{text:'Descrição',style:'th'},
+    {text:'Un.',style:'th'},{text:'Status',style:'th'},{text:'Urg.',style:'th'},{text:'Atualiz.',style:'th'}
+  ];
+  const procBody=[procHead];
+  d.lista.forEach((p,i)=>{
+    const desc=(p.descricao||'—')+((p.responsaveis&&p.responsaveis.length)?('\nResp.: '+p.responsaveis.join(', ')):'');
+    procBody.push([
+      {text:String(i+1),style:'td'},
+      {text:p.numero||'—',style:'td'},
+      {text:desc,style:'td'},
+      {text:p.unidade||'—',style:'td'},
+      {text:p.status||'—',style:'td'},
+      {text:p.urgencia||'—',style:'td'},
+      {text:p.dataAtualizacao||'—',style:'td'}
+    ]);
+  });
+
+  const content=[
+    {text:'POLÍCIA MILITAR DO ESTADO DO RIO DE JANEIRO',style:'h1'},
+    {text:'COMANDO DE OPERAÇÕES ESPECIAIS — SEI DIGITAL COE',style:'h2'},
+    {text:`${d.titulo}  |  ${d.escopo}`,style:'meta'},
+    {text:`Gerado em ${d.dataHora} por ${d.geradoPor}`,style:'meta'},
+    {canvas:[{type:'line',x1:0,y1:0,x2:515,y2:0,lineWidth:1.4,lineColor:'#C8991A'}],margin:[0,4,0,10]},
+    {columns:[
+      {width:'*',stack:[{text:'Quantitativo por Status',style:'h3'},{table:{widths:['*','auto'],body:statusRows},layout:'lightHorizontalLines'}]},
+      {width:10,text:''},
+      {width:'*',stack:[{text:'Por Unidade',style:'h3'},{table:{widths:['*','auto'],body:unRows},layout:'lightHorizontalLines'}]}
+    ]}
+  ];
+
+  // ---- Seções inteligentes no PDF (semanal/mensal) ----
+  if(d.resumo && d.resumo.length){
+    content.push({text:'Resumo Executivo',style:'h3',margin:[0,14,0,4]});
+    content.push({ul:d.resumo.map(l=>({text:l,fontSize:7.5,margin:[0,1,0,1]})),margin:[0,0,0,4]});
+  }
+  if(d.analise){
+    const a=d.analise;
+    const kpiTable={table:{widths:['*','*','*','*','*','*'],body:[[
+      {text:'Criados',style:'th'},{text:'Atualizados',style:'th'},{text:'Concluídos',style:'th'},
+      {text:'Mud.Status',style:'th'},{text:'Pz.Vencidos',style:'th'},{text:'Críticos',style:'th'}
+    ],[
+      {text:String(a.criados.length),style:'td',alignment:'center'},
+      {text:String(a.atualizados.length),style:'td',alignment:'center'},
+      {text:String(a.finalizados.length),style:'td',alignment:'center'},
+      {text:String(a.mudancaStatus.length),style:'td',alignment:'center'},
+      {text:String(a.prazosVencidos.length),style:'td',alignment:'center'},
+      {text:String(a.criticos.length),style:'td',alignment:'center'}
+    ]]},layout:'lightHorizontalLines',margin:[0,0,0,6]};
+    content.push({text:'Movimentação do Período',style:'h3',margin:[0,14,0,4]});
+    content.push(kpiTable);
+
+    const secPdf=(titulo,arr,extra)=>{
+      if(!arr.length) return;
+      const head=[{text:'Número SEI',style:'th'},{text:'Descrição',style:'th'},{text:'Un.',style:'th'},{text:'Status',style:'th'}];
+      if(extra) head.push({text:extra,style:'th'});
+      const body=[head];
+      arr.forEach(p=>{
+        const row=[
+          {text:p.numero||'—',style:'td'},{text:p.descricao||'—',style:'td'},
+          {text:p.unidade||'—',style:'td'},{text:p.status||'—',style:'td'}
+        ];
+        if(extra==='Prazo') row.push({text:p.prazo?_parsePrazo(p.prazo).toLocaleDateString('pt-BR'):'—',style:'td'});
+        else if(extra) row.push({text:p.urgencia||'—',style:'td'});
+        body.push(row);
+      });
+      const widths = extra?[90,'*',26,50,44]:[90,'*',26,50];
+      content.push({text:`${titulo} (${arr.length})`,style:'h3',margin:[0,10,0,4]});
+      content.push({table:{headerRows:1,widths,body},layout:{fillColor:(r)=>r===0?'#0A1628':(r%2===0?'#F6F8FB':null)}});
+    };
+    secPdf('Processos Criados no Período', a.criados);
+    secPdf('Processos Concluídos no Período', a.finalizados);
+    secPdf('Mudanças de Status no Período', a.mudancaStatus);
+    secPdf('Prazos Vencidos (pendentes)', a.prazosVencidos,'Prazo');
+    if(a.prazosNaJanela && a.prazosNaJanela.length) secPdf('Prazos que Vencem no Período', a.prazosNaJanela,'Prazo');
+    secPdf('Processos Críticos', a.criticos,'Urg.');
+  }
+  if(d.porMembro && d.porMembro.length){
+    const memRows=[[{text:'Responsável',style:'th'},{text:'Qtd.',style:'th'}]];
+    d.porMembro.forEach(([m,n])=>memRows.push([{text:m,style:'td'},{text:String(n),style:'td'}]));
+    content.push({text:'Quantitativo por Responsável',style:'h3',margin:[0,10,0,4]});
+    content.push({table:{headerRows:1,widths:['*','auto'],body:memRows},layout:'lightHorizontalLines'});
+  }
+
+  // Lista detalhada
+  const _lblPdf=(d.tipo==='semanal'||d.tipo==='mensal')?'Movimentação Detalhada':'Processos';
+  content.push({text:`${_lblPdf} (${d.lista.length})`,style:'h3',margin:[0,14,0,4]});
+  content.push({table:{headerRows:1,widths:[14,90,'*',26,50,34,44],body:procBody},layout:{
+    fillColor:(r)=> r===0?'#0A1628':(r%2===0?'#F6F8FB':null)
+  }});
+
+  const docDef={
+    pageMargins:[40,40,40,60],
+    content,
+    styles:{
+      h1:{fontSize:12,bold:true,alignment:'center',color:'#0A1628'},
+      h2:{fontSize:10,bold:true,alignment:'center',color:'#C8991A',margin:[0,2,0,0]},
+      h3:{fontSize:9,bold:true,color:'#0A1628',margin:[0,8,0,4]},
+      meta:{fontSize:7.5,alignment:'center',color:'#555',margin:[0,1,0,0]},
+      th:{fontSize:7,bold:true,color:'#FFFFFF',fillColor:'#0A1628',margin:[1,2,1,2]},
+      td:{fontSize:6.8,color:'#222',margin:[1,1,1,1]}
+    },
+    defaultStyle:{fontSize:7.5,color:'#222'},
+    footer:(cur,tot)=>({
+      margin:[40,10,40,0],
+      columns:[
+        {text:[{text:'Cód. Recuperação: ',fontSize:6.5,color:'#666'},{text:d.codigo,fontSize:6.5,bold:true,color:'#0A1628'}],width:'*'},
+        {text:`Página ${cur} de ${tot}`,fontSize:6.5,color:'#666',alignment:'right',width:'auto'}
+      ]
+    })
+  };
+
+  try{
+    pdfMake.createPdf(docDef).download(_relFilename('pdf'));
+    showToast('PDF gerado.','success');
+  }catch(e){ console.error(e); showToast('Falha ao gerar PDF.','error'); }
+}
+
+function imprimirRelatorio(){
+  if(!REL.dados){ showToast('Gere a pré-visualização primeiro.','error'); return; }
+  window.print();
+}
+
+function _baixarBlob(blob,nome){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+}
 
 // ========================================
 // OVERRIDE showView (mobile nav highlight)
@@ -3392,6 +4721,12 @@ window.onload=()=>{
       if(na&&u.role==='admin') na.style.display='flex';
       const ma=document.getElementById('menu-admin-link');
       if(ma&&u.role==='admin') ma.style.display='flex';
+      if(u.role==='admin'){
+        const nr=document.getElementById('nav-relatorios'); if(nr) nr.style.display='flex';
+        const mnr=document.getElementById('mnav-relatorios'); if(mnr) mnr.style.display='flex';
+        setTimeout(()=>{ try{ verificarLembretesRelatorio(); }catch(e){}
+        try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){} }, 2800);
+      }
       listenFirebase();
       return;
     }
