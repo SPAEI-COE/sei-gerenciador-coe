@@ -2577,7 +2577,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.07.27';
+const APP_VERSION = '2026.08.04';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -2646,13 +2646,13 @@ function listenFirebase(){
   // Processos
   db.ref('/sei-digital/processos').on('value', snap=>{
     STATE.processos = snap.val() || {};
-    if(Object.keys(STATE.processos).length===0) carregarProcessosSeed();
+    if(Object.keys(STATE.processos).length===0) verificarSeedProcessos();
     updateUI();
   });
   // Membros
   db.ref('/sei-digital/membros').on('value', snap=>{
     STATE.membros = snap.val() || {};
-    if(Object.keys(STATE.membros).length===0) carregarMembrosDefault();
+    if(Object.keys(STATE.membros).length===0) verificarSeedMembros();
     carregarSelectResp();
     renderMembros();
     buildRespBoxes();
@@ -2681,16 +2681,37 @@ function listenFirebase(){
   });
 }
 
+// CORRIGIDO (auditoria 04/08, a pedido do usuário): antes, a reposição dos
+// dados padrão disparava toda vez que a lista ficava vazia — inclusive quando
+// um administrador excluía o último processo ou o último membro de propósito,
+// o que desfazia a exclusão sozinho no instante seguinte. Agora só repõe na
+// PRIMEIRA vez de verdade (sinalizador gravado no próprio Firebase, sobrevive
+// a troca de aparelho/cache); depois disso, lista vazia fica vazia.
+async function verificarSeedProcessos(){
+  try{
+    const flag = await db.ref('/sei-digital/config/processosSeedFeito').get();
+    if(!flag.val()) await carregarProcessosSeed();
+  }catch(e){ console.error('Verificação de seed de processos falhou:',e); }
+}
+async function verificarSeedMembros(){
+  try{
+    const flag = await db.ref('/sei-digital/config/membrosSeedFeito').get();
+    if(!flag.val()) await carregarMembrosDefault();
+  }catch(e){ console.error('Verificação de seed de membros falhou:',e); }
+}
+
 async function carregarMembrosDefault(){
   const updates = {};
   MEMBROS_DEFAULT.forEach(m=>{updates[m.id]=m});
   await db.ref('/sei-digital/membros').set(updates);
+  await db.ref('/sei-digital/config/membrosSeedFeito').set(true);
 }
 
 async function carregarProcessosSeed(){
   try {
     showToast('Importando 192 processos do Gerenciador SEI...','info');
     await db.ref('/sei-digital/processos').set(SEED_PROCESSOS);
+    await db.ref('/sei-digital/config/processosSeedFeito').set(true);
     showToast('✅ 192 processos importados com sucesso!','success');
   } catch(e) {
     console.error('Seed processos error:',e);
