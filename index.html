@@ -1885,14 +1885,22 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
             <p style="font-size:.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.5">
               Baixe um backup completo do sistema em formato <b>.json</b> — inclui todos os processos, membros e configurações. <b>Senhas e tokens não são exportados</b> por segurança. Guarde o arquivo em local seguro.
             </p>
+            <p style="font-size:.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.5">
+              Além disso, o sistema grava sozinho um <b>backup automático completo</b> no próprio banco a cada login de administrador (no máx. 1x por dia), mantendo os 20 mais recentes — sem precisar lembrar de clicar em nada.
+            </p>
             <div style="display:flex;gap:10px;flex-wrap:wrap">
               <button class="btn btn-primary btn-sm" onclick="exportarBackupJSON()">
                 <i class="fas fa-download"></i> Baixar Backup Completo (.json)
               </button>
+              <button class="btn btn-secondary btn-sm" onclick="abrirPainelRestaurar()">
+                <i class="fas fa-history"></i> Restaurar Backup
+              </button>
             </div>
             <div id="backup-info" style="font-size:.72rem;color:var(--text-dim);margin-top:10px"></div>
+            <div id="backup-auto-info" style="font-size:.72rem;color:var(--text-dim);margin-top:4px"></div>
           </div>
         </div>
+
 
         <!-- Administradores -->
         <div class="admin-section" style="margin-bottom:20px">
@@ -2375,6 +2383,25 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
   </div>
 </div>
 
+<!-- ===== MODAL RESTAURAR BACKUP ===== -->
+<div class="modal-backdrop" id="modal-restaurar">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fas fa-history" style="color:var(--primary)"></i> Restaurar Backup</div>
+      <button class="modal-close" onclick="fecharModal('modal-restaurar')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:.74rem;color:var(--text-dim);margin:0 0 10px">
+        Antes de restaurar, o estado atual é salvo automaticamente como um novo backup — nada se perde de verdade, mesmo se você escolher o backup errado.
+      </p>
+      <div id="restaurar-lista"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-restaurar')">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== TOAST ===== -->
 <div class="toast" id="toast">
   <i class="fas fa-check-circle" id="toast-icon"></i>
@@ -2575,7 +2602,8 @@ function iniciarApp(){
   carregarSelectResp();
   // Lembretes visuais inteligentes (semanal/mensal) — aguarda dados carregarem
   setTimeout(()=>{ try{ verificarLembretesRelatorio(); }catch(e){}
-    try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){} }, 2500);
+    try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){}
+    try{ backupAutomaticoSeNecessario(); }catch(e){} }, 2500);
 }
 
 function doLogout(){
@@ -2592,7 +2620,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.08.04';
+const APP_VERSION = '2026.08.14';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -3649,8 +3677,157 @@ function exportarBackupJSON(){
 }
 
 // ========================================
-// CONFIG
+// BACKUP AUTOMÁTICO + RESTAURAÇÃO (Admin)
 // ========================================
+// Motivo (14/08/2026): o app só tinha backup MANUAL (botão acima) e um
+// "snapshot" de relatório que NÃO é backup de verdade (só IDs+contagens, sem
+// os dados reais dos processos) — mas o texto dos relatórios prometia um
+// painel "Restaurar Snapshot" que nunca existiu. Corrigido com um backup
+// automático REAL (mesmos dados do botão manual) + painel de restauração
+// que realmente funciona, com rede de segurança própria (nunca sobrescreve
+// sem antes salvar o estado atual).
+const BACKUP_AUTO_INTERVALO_MS = 20*60*60*1000; // ~1x por dia (tolerante a variação de horário de login)
+const BACKUP_AUTO_RETENCAO = 20; // mantém os 20 backups automáticos mais recentes
+
+// Remove qualquer chave sensível recursivamente (mesma regra do backup manual)
+function _limparSensivel(obj){
+  const SENSIVEIS=/senha|password|token|hash|pin|secret/i;
+  const rec=(o)=>{
+    if(Array.isArray(o)) return o.map(rec);
+    if(o && typeof o==='object'){
+      const out={};
+      for(const [k,v] of Object.entries(o)){
+        if(SENSIVEIS.test(k)) continue;
+        out[k]=rec(v);
+      }
+      return out;
+    }
+    return o;
+  };
+  return rec(obj);
+}
+
+// Escreve um backup completo real no Firebase (processos+membros+admins+config,
+// sanitizado) e devolve a chave usada. origem: 'automatico'|'manual-nuvem'|'pre-restauracao'
+async function _executarBackupCompleto(origem){
+  const agora=Date.now();
+  const chave=String(agora);
+  const payload={
+    meta:{
+      origem,
+      geradoEm:agora,
+      geradoEmBR:new Date(agora).toLocaleString('pt-BR'),
+      geradoPor:STATE.currentUser?.nome||'sistema',
+    },
+    processos:_limparSensivel(STATE.processos||{}),
+    membros:_limparSensivel(STATE.membros||{}),
+    admins:_limparSensivel(STATE.admins||{}),
+  };
+  await db.ref('/sei-digital/backups-completos/'+chave).set(payload);
+  return chave;
+}
+
+// Mantém só os N backups de origem 'automatico' mais recentes — nunca apaga
+// backups 'pre-restauracao' (são a rede de segurança de uma restauração já feita).
+async function _podarBackupsAntigos(){
+  const snap = await db.ref('/sei-digital/backups-completos').orderByKey().get();
+  const todos = snap.val() || {};
+  const chaves = Object.keys(todos).filter(k=>todos[k]?.meta?.origem==='automatico').sort();
+  const excesso = chaves.length - BACKUP_AUTO_RETENCAO;
+  if(excesso<=0) return;
+  await Promise.all(chaves.slice(0,excesso).map(k=>db.ref('/sei-digital/backups-completos/'+k).remove()));
+}
+
+// Chamado 1x por sessão de admin (ver iniciarApp). Nunca bloqueia a UI nem
+// mostra erro pro usuário se falhar (mesmo padrão do snapshot de relatório
+// já existente) — é uma rede de segurança silenciosa, não uma ação pedida.
+async function backupAutomaticoSeNecessario(){
+  if(STATE.currentUser?.role!=='admin') return;
+  try{
+    const cfgSnap = await db.ref('/sei-digital/config/ultimoBackupAutomaticoEm').get();
+    const ultimo = cfgSnap.val() || 0;
+    const info=document.getElementById('backup-auto-info');
+    if(Date.now()-ultimo < BACKUP_AUTO_INTERVALO_MS){
+      if(info) info.textContent = 'Último backup automático: '+new Date(ultimo).toLocaleString('pt-BR');
+      return;
+    }
+    await _executarBackupCompleto('automatico');
+    await db.ref('/sei-digital/config/ultimoBackupAutomaticoEm').set(Date.now());
+    await _podarBackupsAntigos();
+    if(info) info.textContent = 'Último backup automático: agora mesmo ('+new Date().toLocaleString('pt-BR')+')';
+  }catch(e){ console.warn('Backup automático não realizado (offline ou erro):',e); }
+}
+
+function _escHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function abrirPainelRestaurar(){
+  if(STATE.currentUser?.role!=='admin'){ showToast('Apenas administradores podem restaurar backup.','error'); return; }
+  const cont=document.getElementById('restaurar-lista');
+  if(cont) cont.innerHTML='<p style="font-size:.75rem;color:var(--text-dim)">Carregando backups disponíveis…</p>';
+  abrirModal('modal-restaurar');
+  try{
+    const snap = await db.ref('/sei-digital/backups-completos').orderByKey().get();
+    const todos = snap.val() || {};
+    const chaves = Object.keys(todos).sort().reverse(); // mais recente primeiro
+    if(!cont) return;
+    if(!chaves.length){
+      cont.innerHTML='<p style="font-size:.75rem;color:var(--text-dim)">Nenhum backup automático encontrado ainda. O primeiro é gerado sozinho neste login. Enquanto isso, use "Baixar Backup Completo" para um manual.</p>';
+      return;
+    }
+    cont.innerHTML = chaves.slice(0,30).map(k=>{
+      const b=todos[k];
+      const dt = b?.meta?.geradoEmBR || new Date(+k).toLocaleString('pt-BR');
+      const origem = b?.meta?.origem||'—';
+      const nProc = Object.keys(b?.processos||{}).length;
+      const nMem = Object.keys(b?.membros||{}).length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;gap:10px">
+        <div style="font-size:.75rem">
+          <b>${_escHtml(dt)}</b> <span style="color:var(--text-dim)">(${_escHtml(origem)})</span><br>
+          <span style="color:var(--text-dim)">${nProc} processos · ${nMem} membros</span>
+        </div>
+        <button class="btn btn-sm btn-outline" onclick="confirmarRestauracao('${k}')"><i class="fas fa-undo"></i> Restaurar</button>
+      </div>`;
+    }).join('');
+  }catch(e){
+    if(cont) cont.innerHTML='<p style="font-size:.75rem;color:var(--red)">Erro ao carregar backups: '+_escHtml(e.message)+'</p>';
+  }
+}
+
+async function confirmarRestauracao(chave){
+  let backup;
+  try{
+    const snap = await db.ref('/sei-digital/backups-completos/'+chave).get();
+    backup = snap.val();
+  }catch(e){ showToast('Erro ao ler backup: '+e.message,'error'); return; }
+  if(!backup){ showToast('Backup não encontrado.','error'); return; }
+  const nProcAtual=Object.keys(STATE.processos||{}).length;
+  const nMemAtual=Object.keys(STATE.membros||{}).length;
+  const nProcBkp=Object.keys(backup.processos||{}).length;
+  const nMemBkp=Object.keys(backup.membros||{}).length;
+  const dt = backup?.meta?.geradoEmBR || new Date(+chave).toLocaleString('pt-BR');
+  confirmar(
+    'Restaurar backup de '+dt+'?',
+    `Isso vai SUBSTITUIR os dados atuais (${nProcAtual} processos, ${nMemAtual} membros) pelos do backup (${nProcBkp} processos, ${nMemBkp} membros). O estado atual será salvo automaticamente como um novo backup antes de restaurar — nada se perde de verdade. A tela vai recarregar ao final. Continuar?`,
+    ()=>executarRestauracao(backup)
+  );
+}
+
+async function executarRestauracao(backup){
+  showToast('Restaurando — salvando o estado atual primeiro...','info');
+  try{
+    // Rede de segurança: o estado ATUAL vira backup antes de qualquer sobrescrita.
+    await _executarBackupCompleto('pre-restauracao');
+    await db.ref('/sei-digital/processos').set(backup.processos||{});
+    await db.ref('/sei-digital/membros').set(backup.membros||{});
+    showToast('Backup restaurado com sucesso. Recarregando...','success');
+    fecharModal('modal-restaurar');
+    setTimeout(()=>location.reload(),1200);
+  }catch(e){
+    showToast('Erro ao restaurar: '+e.message,'error');
+  }
+}
+
+
 async function salvarConfig(){
   await db.ref('/sei-digital/config/diasAlerta').set(parseInt(document.getElementById('cfg-diasalerta').value)||7);
   await db.ref('/sei-digital/config/autoSync').set(document.getElementById('cfg-autosync').value);
@@ -4437,8 +4614,8 @@ function renderPreviewRelatorio(){
   html+=`</table>`;
 
   html+=`<div class="rel-foot">
-    <b>Código de Recuperação:</b> <span class="rel-cod">${d.codigo}</span><br>
-    Em caso de perda de dados, utilize este código no painel <b>Admin → Restaurar Snapshot</b>.<br>
+    <b>Código do Relatório:</b> <span class="rel-cod">${d.codigo}</span><br>
+    Este código identifica um registro leve (contagens e IDs) deste relatório, guardado para auditoria — não é um backup completo dos processos. Em caso de perda de dados, use <b>Admin → Backup &amp; Exportação → Restaurar Backup</b>.<br>
     Documento gerado eletronicamente pelo sistema SEI DIGITAL COE — SPAEI/COE-PMERJ.
   </div>`;
   document.getElementById('rel-preview').innerHTML=html;
@@ -4560,8 +4737,8 @@ function exportarRelatorioMD(){
   d.lista.forEach((p,i)=>{
     md+=`| ${i+1} | ${p.numero||'—'} | ${(p.descricao||'—').replace(/\|/g,'\\|')} | ${p.unidade||'—'} | ${p.status||'—'} | ${p.urgencia||'—'} | ${p.dataAtualizacao||'—'} |\n`;
   });
-  md+=`\n---\n\n**Código de Recuperação:** \`${d.codigo}\`\n\n`;
-  md+=`> Em caso de perda de dados, utilize este código no painel **Admin → Restaurar Snapshot**.\n\n`;
+  md+=`\n---\n\n**Código do Relatório:** \`${d.codigo}\`\n\n`;
+  md+=`> Este código identifica um registro leve (contagens e IDs), guardado para auditoria — não é um backup completo. Em caso de perda de dados, use **Admin → Backup & Exportação → Restaurar Backup**.\n\n`;
   md+=`_Documento gerado eletronicamente pelo sistema SEI DIGITAL COE — SPAEI/COE-PMERJ._\n`;
   const blob=new Blob([md],{type:'text/markdown;charset=utf-8'});
   _baixarBlob(blob,_relFilename('md'));
@@ -4761,7 +4938,8 @@ window.onload=()=>{
         const nr=document.getElementById('nav-relatorios'); if(nr) nr.style.display='flex';
         const mnr=document.getElementById('mnav-relatorios'); if(mnr) mnr.style.display='flex';
         setTimeout(()=>{ try{ verificarLembretesRelatorio(); }catch(e){}
-        try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){} }, 2800);
+        try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){}
+        try{ backupAutomaticoSeNecessario(); }catch(e){} }, 2800);
       }
       listenFirebase();
       return;
