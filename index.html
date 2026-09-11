@@ -2620,7 +2620,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.08.14';
+const APP_VERSION = '2026.09.10';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -3429,7 +3429,7 @@ function renderAdmins(){
         <div class="admin-role">Admin · Promovido por ${adm.promovidoPor||'—'}</div>
       </div>
       <div class="admin-actions">
-        <button class="btn btn-danger btn-sm" onclick="revogarAdmin('${id}','${adm.nome}')"><i class="fas fa-user-minus"></i></button>
+        <button class="btn btn-danger btn-sm" onclick="revogarAdmin(_argVal(${_safeArg(id)}),_argVal(${_safeArg(adm.nome)}))"><i class="fas fa-user-minus"></i></button>
       </div>
     </div>
   `).join('');
@@ -3759,6 +3759,18 @@ async function backupAutomaticoSeNecessario(){
 }
 
 function _escHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ── ARGUMENTO SEGURO PRA onclick (10/09) — mesma correção aplicada no app
+// irmão SPAEI DIGITAL. _escHtml() NÃO protege texto livre usado como
+// argumento de string dentro de onclick="funcao('${x}')": o navegador
+// decodifica a entidade HTML ANTES de compilar o atributo como JS,
+// reintroduzindo o caractere cru e quebrando a sintaxe (SyntaxError). Nunca
+// embutir texto livre (nome de pessoa, descrição, etc.) como literal de
+// string em onclick — cachear e passar só o índice numérico, que nunca
+// pode quebrar sintaxe nenhuma.
+window._argCache = window._argCache || [];
+function _safeArg(v){ window._argCache.push(v); return window._argCache.length-1; }
+function _argVal(i){ return window._argCache[i]; }
 
 async function abrirPainelRestaurar(){
   if(STATE.currentUser?.role!=='admin'){ showToast('Apenas administradores podem restaurar backup.','error'); return; }
