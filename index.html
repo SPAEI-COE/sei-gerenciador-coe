@@ -147,7 +147,7 @@ function _renderKpiPills(type,procs){
     const unc={};
     procs.forEach(p=>{const u=p.unidade||'—';unc[u]=(unc[u]||0)+1});
     Object.entries(unc).sort((a,b)=>b[1]-a[1]).slice(0,4).forEach(([u,c])=>
-      pills.push(`<span class="kpi-pill" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.2);color:#F87171">${u}: ${c}</span>`)
+      pills.push(`<span class="kpi-pill" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.2);color:#F87171">${_escHtml(u)}: ${c}</span>`)
     );
   } else if(type==='prazo'){
     const hoje=new Date(); hoje.setHours(0,0,0,0);
@@ -162,12 +162,12 @@ function _renderKpiPills(type,procs){
     const unc={};
     procs.forEach(p=>{const u=p.unidade||'—';unc[u]=(unc[u]||0)+1});
     Object.entries(unc).sort((a,b)=>b[1]-a[1]).slice(0,3).forEach(([u,c])=>
-      pills.push(`<span class="kpi-pill" style="background:rgba(200,153,26,.08);border-color:rgba(200,153,26,.2);color:var(--gold)">${u}: ${c}</span>`)
+      pills.push(`<span class="kpi-pill" style="background:rgba(200,153,26,.08);border-color:rgba(200,153,26,.2);color:var(--gold)">${_escHtml(u)}: ${c}</span>`)
     );
   } else if(type==='andamento'){
     const urg={};
     procs.forEach(p=>{const u=p.urgencia||'Normal';urg[u]=(urg[u]||0)+1});
-    ['Alta','Crítica'].forEach(k=>{if(urg[k]) pills.push(`<span class="kpi-pill" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:var(--amber)">${k}: ${urg[k]}</span>`)});
+    ['Alta','Crítica'].forEach(k=>{if(urg[k]) pills.push(`<span class="kpi-pill" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:var(--amber)">${_escHtml(k)}: ${urg[k]}</span>`)});
   }
   el.innerHTML=pills.join('')||'<span style="font-size:.68rem;color:var(--text-dim)">— sem resumo adicional</span>';
 }
@@ -190,13 +190,13 @@ function _renderKpiContent(procs){
       const lbl=diff<0?'VENC':diff===0?'HOJE':diff+'d';
       prazoHtml=`<span class="prazo-dias-badge ${cls}" style="padding:2px 7px;font-size:.6rem;border-radius:4px">${lbl}</span>`;
     }
-    const respHtml=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${r}</span>`).join('');
-    const unBadge=proc.unidade?`<span class="badge badge-normal" style="font-size:.58rem">${proc.unidade}</span>`:'';
+    const respHtml=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${_escHtml(r)}</span>`).join('');
+    const unBadge=proc.unidade?`<span class="badge badge-normal" style="font-size:.58rem">${_escHtml(proc.unidade)}</span>`:'';
     const spaeiIco=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sync SPAEI"></i>`:'';
     const critIco=proc.urgencia==='Crítica'?`<i class="fas fa-fire" style="color:var(--red);font-size:.65rem"></i>`:'';
     return `<div class="kpi-proc-item" onclick="fecharKpiAbrirModal('${procId}')">
-      <div class="kpi-proc-numero">${proc.numero||'—'}</div>
-      <div class="kpi-proc-desc">${proc.descricao||'—'}</div>
+      <div class="kpi-proc-numero">${_escHtml(proc.numero)||'—'}</div>
+      <div class="kpi-proc-desc">${_escHtml(proc.descricao)||'—'}</div>
       <div class="kpi-proc-meta">
         ${unBadge}${getStatusBadge(proc.status)}${prazoHtml}${spaeiIco}${critIco}
         <div style="flex:1"></div>
@@ -2620,7 +2620,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.09.10';
+const APP_VERSION = '2026.09.10.2';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -2888,14 +2888,14 @@ function renderTable(){
       const label=diff<0?'Vencido':`${diff}d`;
       prazoHtml=`<span class="${cls}" style="font-size:.75rem;font-weight:600">${_fmtPrazo(proc.prazo)} <span style="font-size:.65rem">(${label})</span></span>`;
     }
-    const resps=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${r}</span>`).join('');
-    const pcaHtml=proc.pca?`<span class="pca-chip">${proc.pca}</span>`:'<span style="color:var(--text-dim)">—</span>';
+    const resps=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${_escHtml(r)}</span>`).join('');
+    const pcaHtml=proc.pca?`<span class="pca-chip">${_escHtml(proc.pca)}</span>`:'<span style="color:var(--text-dim)">—</span>';
     const spaeiHtml=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sincronizado com SPAEI DIGITAL em ${new Date(proc.spaeiSyncAt||0).toLocaleDateString('pt-BR')}"></i>`:'<span style="color:var(--text-dim)">—</span>';
     const editBtns=STATE.currentUser?.role==='admin'?`<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();abrirModalEditar('${proc.id}')"><i class="fas fa-edit"></i></button>`:'';
     return `<tr onclick="abrirModalEditar('${proc.id}')">
-      <td class="td-numero">${proc.duplicata?'<span class="badge badge-dup">DUP</span> ':''}<span title="${proc.numero}">${truncate(proc.numero,22)}</span></td>
-      <td class="td-desc"><span title="${proc.descricao}">${truncate(proc.descricao,30)}</span>${proc.observacoes?`<div class="td-obs">${truncate(proc.observacoes,35)}</div>`:''}</td>
-      <td><span class="badge badge-normal" style="font-size:.65rem">${proc.unidade||'—'}</span></td>
+      <td class="td-numero">${proc.duplicata?'<span class="badge badge-dup">DUP</span> ':''}<span title="${_escHtml(proc.numero)}">${_escHtml(truncate(proc.numero,22))}</span></td>
+      <td class="td-desc"><span title="${_escHtml(proc.descricao)}">${_escHtml(truncate(proc.descricao,30))}</span>${proc.observacoes?`<div class="td-obs">${_escHtml(truncate(proc.observacoes,35))}</div>`:''}</td>
+      <td><span class="badge badge-normal" style="font-size:.65rem">${_escHtml(proc.unidade)||'—'}</span></td>
       <td>${statusBadge}</td>
       <td>${urgBadge}</td>
       <td><div class="resp-list">${resps||'<span style="color:var(--text-dim);font-size:.75rem">—</span>'}</div></td>
@@ -2911,12 +2911,12 @@ function truncate(s,n){if(!s)return'';return s.length>n?s.slice(0,n)+'…':s}
 
 function getStatusBadge(s){
   const m={'Em Andamento':'em-andamento','Aguardando':'aguardando','Finalizado':'finalizado','Cancelado':'cancelado','Baixado':'baixado','Encerrado':'encerrado'};
-  return `<span class="badge badge-${m[s]||'normal'}">${s||'—'}</span>`;
+  return `<span class="badge badge-${m[s]||'normal'}">${_escHtml(s)||'—'}</span>`;
 }
 function getUrgBadge(u){
   const m={'Crítica':'critica','Alta':'alta','Normal':'normal','Baixa':'baixa'};
   const icons={'Crítica':'🔴','Alta':'🟠','Normal':'🔵','Baixa':'⚪'};
-  return `<span class="badge badge-${m[u]||'normal'}">${u||'—'}</span>`;
+  return `<span class="badge badge-${m[u]||'normal'}">${_escHtml(u)||'—'}</span>`;
 }
 
 // ========================================
@@ -2962,10 +2962,10 @@ function renderDashboard(){
       dr.innerHTML=`<div class="rank-list">`+respEntries.map(([nome,cnt],i)=>{
         const pct=Math.round((cnt/maxResp)*100);
         const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
-        return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${nome}">
+        return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${_escHtml(nome)}">
           <div class="rank-pos">${i+1}</div>
-          <div class="rank-av">${init}</div>
-          <div class="rank-nome" title="${nome}">${nome}</div>
+          <div class="rank-av">${_escHtml(init)}</div>
+          <div class="rank-nome" title="${_escHtml(nome)}">${_escHtml(nome)}</div>
           <div class="rank-track"><div class="rank-fill" style="width:${pct}%"></div></div>
           <div class="rank-count">${cnt}</div>
         </div>`;
@@ -2987,7 +2987,7 @@ function renderDashboard(){
         const pct=Math.round((cnt/maxUn)*100);
         const cor=UNIT_COLORS[un]||'var(--gold)';
         return `<div class="dist-bar-row">
-          <div class="dist-bar-label">${un}</div>
+          <div class="dist-bar-label">${_escHtml(un)}</div>
           <div class="dist-bar-track"><div class="dist-bar-fill" style="width:${pct}%;background:${cor}"></div></div>
           <div class="dist-bar-count">${cnt}</div>
         </div>`;
@@ -3016,8 +3016,8 @@ function renderDashboard(){
       return `<div class="prazo-row">
         <div class="prazo-dias-badge ${cls}">${label}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proc.descricao}</div>
-          <div style="font-size:.67rem;color:var(--text-muted);margin-top:2px">${proc.numero} · ${(proc.responsaveis||[]).join(', ')||'—'}</div>
+          <div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escHtml(proc.descricao)}</div>
+          <div style="font-size:.67rem;color:var(--text-muted);margin-top:2px">${_escHtml(proc.numero)} · ${_escHtml((proc.responsaveis||[]).join(', '))||'—'}</div>
         </div>
         ${getStatusBadge(proc.status)}
         ${proc.urgencia==='Crítica'?'<i class="fas fa-fire" style="color:var(--red);font-size:.75rem" title="Crítica"></i>':''}
@@ -3048,9 +3048,9 @@ function renderSPAEIView(){
   }
   tbody.innerHTML=sincronizados.map(proc=>{
     return `<tr>
-      <td class="td-numero">${proc.numero}</td>
-      <td>${truncate(proc.descricao,35)}</td>
-      <td><div class="resp-list">${(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${r}</span>`).join('')||'—'}</div></td>
+      <td class="td-numero">${_escHtml(proc.numero)}</td>
+      <td>${_escHtml(truncate(proc.descricao,35))}</td>
+      <td><div class="resp-list">${(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${_escHtml(r)}</span>`).join('')||'—'}</div></td>
       <td>${proc.prazo?_fmtPrazo(proc.prazo):'—'}</td>
       <td>${getUrgBadge(proc.urgencia)}</td>
       <td>${getStatusBadge(proc.status)}</td>
@@ -3067,9 +3067,9 @@ function buildRespBoxes(){
   const box=document.getElementById('mp-resp-boxes');
   if(!box) return;
   box.innerHTML=membros.map(m=>`
-    <div class="resp-checkbox-item" onclick="toggleResp(this)" data-nome="${m.nome}">
-      <input type="checkbox" data-nome="${m.nome}">
-      ${m.nome}
+    <div class="resp-checkbox-item" onclick="toggleResp(this)" data-nome="${_escHtml(m.nome)}">
+      <input type="checkbox" data-nome="${_escHtml(m.nome)}">
+      ${_escHtml(m.nome)}
     </div>
   `).join('');
 }
@@ -3189,9 +3189,9 @@ function renderTimelineHistorico(){
   cont.innerHTML=ordenado.map(h=>{
     const isSys=/sistema/i.test(h.por||'');
     return `<div class="tl-item${isSys?' sys':''}">
-      <div class="tl-date">${h.data||'—'}</div>
-      <div class="tl-text">${h.texto||'—'}</div>
-      ${h.por?`<div class="tl-by"><i class="fas fa-user" style="font-size:.6rem"></i> ${h.por}</div>`:''}
+      <div class="tl-date">${_escHtml(h.data)||'—'}</div>
+      <div class="tl-text">${_escHtml(h.texto)||'—'}</div>
+      ${h.por?`<div class="tl-by"><i class="fas fa-user" style="font-size:.6rem"></i> ${_escHtml(h.por)}</div>`:''}
     </div>`;
   }).join('');
 }
@@ -3336,7 +3336,7 @@ function carregarSelectResp(){
   const sel=document.getElementById('f-resp');
   if(!sel) return;
   const val=sel.value;
-  sel.innerHTML='<option value="">Responsável</option>'+membros.map(m=>`<option value="${m.nome}">${m.nome}</option>`).join('');
+  sel.innerHTML='<option value="">Responsável</option>'+membros.map(m=>`<option value="${_escHtml(m.nome)}">${_escHtml(m.nome)}</option>`).join('');
   sel.value=val;
 }
 
@@ -3345,18 +3345,20 @@ function renderMembros(){
   const list=document.getElementById('membros-list');
   if(!list) return;
   if(membros.length===0){list.innerHTML='<div style="color:var(--text-dim);font-size:.8rem;text-align:center;padding:16px">Nenhum membro cadastrado</div>';return;}
-  list.innerHTML=membros.map(m=>`
+  list.innerHTML=membros.map(m=>{
+    const iniciais=m.nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||'?';
+    return `
     <div class="admin-item">
-      <div class="admin-avatar">${m.nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||'?'}</div>
+      <div class="admin-avatar">${_escHtml(iniciais)}</div>
       <div class="admin-info">
-        <div class="admin-nome">${m.nome}</div>
-        <div class="admin-role">${m.cargo||'—'} · ${m.unidade||'—'}</div>
+        <div class="admin-nome">${_escHtml(m.nome)}</div>
+        <div class="admin-role">${_escHtml(m.cargo)||'—'} · ${_escHtml(m.unidade)||'—'}</div>
       </div>
       <div class="admin-actions">
         <button class="btn btn-secondary btn-sm" onclick="abrirModalMembroEditar('${m.id}')"><i class="fas fa-edit"></i></button>
       </div>
     </div>
-  `).join('');
+  `;}).join('');
 }
 
 function abrirModalMembro(){
@@ -3421,18 +3423,20 @@ function renderAdmins(){
       <span class="badge badge-spaei">MASTER</span>
     </div>
   `;
-  const otherAdmins=admins.filter(([,a])=>a.ativo).map(([id,adm])=>`
+  const otherAdmins=admins.filter(([,a])=>a.ativo).map(([id,adm])=>{
+    const iniciais=adm.nome?.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||'?';
+    return `
     <div class="admin-item">
-      <div class="admin-avatar">${adm.nome?.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||'?'}</div>
+      <div class="admin-avatar">${_escHtml(iniciais)}</div>
       <div class="admin-info">
-        <div class="admin-nome">${adm.nome}</div>
-        <div class="admin-role">Admin · Promovido por ${adm.promovidoPor||'—'}</div>
+        <div class="admin-nome">${_escHtml(adm.nome)}</div>
+        <div class="admin-role">Admin · Promovido por ${_escHtml(adm.promovidoPor)||'—'}</div>
       </div>
       <div class="admin-actions">
         <button class="btn btn-danger btn-sm" onclick="revogarAdmin(_argVal(${_safeArg(id)}),_argVal(${_safeArg(adm.nome)}))"><i class="fas fa-user-minus"></i></button>
       </div>
     </div>
-  `).join('');
+  `;}).join('');
   list.innerHTML=masterItem+otherAdmins;
 }
 
@@ -4084,9 +4088,9 @@ function renderMembrosCarga(){
     const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/i.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0].toUpperCase();
     const pct=Math.round((cnt/maxC)*100);
     return `<div class="membro-carga-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')">
-      <div class="mc-avatar">${init}</div>
+      <div class="mc-avatar">${_escHtml(init)}</div>
       <div style="flex:1;min-width:0">
-        <div class="mc-nome" title="${nome}">${nome}</div>
+        <div class="mc-nome" title="${_escHtml(nome)}">${_escHtml(nome)}</div>
         <div class="mc-bar-track"><div class="mc-bar-fill" style="width:${pct}%"></div></div>
       </div>
       <span class="mc-count">${cnt}</span>
@@ -4131,7 +4135,7 @@ function initRelatorios(){
     Object.values(STATE.processos).forEach(p=>(p.responsaveis||[]).forEach(r=>r&&resps.add(r)));
     const atual = sel.value;
     sel.innerHTML = '<option value="">Todos os responsáveis</option>' +
-      [...resps].sort().map(r=>`<option>${r}</option>`).join('');
+      [...resps].sort().map(r=>`<option>${_escHtml(r)}</option>`).join('');
     if(atual) sel.value = atual;
   }
   // Rótulos dinâmicos dos botões rápidos
@@ -4159,10 +4163,10 @@ function renderRankingRelatorios(){
   cont.innerHTML=`<div class="rank-list">`+entries.map(([nome,cnt],i)=>{
     const pct=Math.round((cnt/max)*100);
     const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
-    return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${nome}">
+    return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${_escHtml(nome)}">
       <div class="rank-pos">${i+1}</div>
-      <div class="rank-av">${init}</div>
-      <div class="rank-nome" title="${nome}">${nome}</div>
+      <div class="rank-av">${_escHtml(init)}</div>
+      <div class="rank-nome" title="${_escHtml(nome)}">${_escHtml(nome)}</div>
       <div class="rank-track"><div class="rank-fill" style="width:${pct}%"></div></div>
       <div class="rank-count">${cnt}</div>
     </div>`;
@@ -4539,8 +4543,8 @@ function renderPreviewRelatorio(){
     <h1>POLÍCIA MILITAR DO ESTADO DO RIO DE JANEIRO</h1>
     <h2>COMANDO DE OPERAÇÕES ESPECIAIS — SEI DIGITAL COE</h2>
     <div class="rel-meta">
-      ${d.titulo} &nbsp;|&nbsp; ${d.escopo}<br>
-      Gerado em ${d.dataHora} por ${d.geradoPor}
+      ${_escHtml(d.titulo)} &nbsp;|&nbsp; ${_escHtml(d.escopo)}<br>
+      Gerado em ${_escHtml(d.dataHora)} por ${_escHtml(d.geradoPor)}
     </div>
     <div class="rel-kpis">
       <div class="rel-kpi"><b>${d.q.total}</b><span>Processos</span></div>
@@ -4552,14 +4556,14 @@ function renderPreviewRelatorio(){
 
   // Quadro por status
   html+=`<h3>Quantitativo por Status</h3><table><tr><th>Status</th><th>Qtd.</th></tr>`;
-  kpiStatus.forEach(([s,n])=>html+=`<tr><td>${s}</td><td>${n}</td></tr>`);
+  kpiStatus.forEach(([s,n])=>html+=`<tr><td>${_escHtml(s)}</td><td>${n}</td></tr>`);
   html+=`</table>`;
 
   // Quadro por unidade (se fizer sentido)
   const uns=Object.entries(d.q.porUnidade).sort((a,b)=>b[1]-a[1]);
   if(uns.length>1){
     html+=`<h3>Quantitativo por Unidade</h3><table><tr><th>Unidade</th><th>Qtd.</th></tr>`;
-    uns.forEach(([u,n])=>html+=`<tr><td>${u}</td><td>${n}</td></tr>`);
+    uns.forEach(([u,n])=>html+=`<tr><td>${_escHtml(u)}</td><td>${n}</td></tr>`);
     html+=`</table>`;
   }
 
@@ -4588,8 +4592,8 @@ function renderPreviewRelatorio(){
       arr.forEach(p=>{
         let ex='';
         if(extra==='Prazo') ex=`<td>${p.prazo?_parsePrazo(p.prazo).toLocaleDateString('pt-BR'):'—'}</td>`;
-        else if(extra) ex=`<td>${p.urgencia||'—'}</td>`;
-        s+=`<tr><td>${p.numero||'—'}</td><td>${p.descricao||'—'}</td><td>${p.unidade||'—'}</td><td>${p.status||'—'}</td>${ex}</tr>`;
+        else if(extra) ex=`<td>${_escHtml(p.urgencia)||'—'}</td>`;
+        s+=`<tr><td>${_escHtml(p.numero)||'—'}</td><td>${_escHtml(p.descricao)||'—'}</td><td>${_escHtml(p.unidade)||'—'}</td><td>${_escHtml(p.status)||'—'}</td>${ex}</tr>`;
       });
       return s+`</table>`;
     };
@@ -4604,7 +4608,7 @@ function renderPreviewRelatorio(){
   // Quantitativo por membro (semanal/mensal)
   if(d.porMembro && d.porMembro.length){
     html+=`<h3>Quantitativo por Responsável</h3><table><tr><th>Responsável</th><th>Qtd.</th></tr>`;
-    d.porMembro.forEach(([m,n])=>html+=`<tr><td>${m}</td><td>${n}</td></tr>`);
+    d.porMembro.forEach(([m,n])=>html+=`<tr><td>${_escHtml(m)}</td><td>${n}</td></tr>`);
     html+=`</table>`;
   }
 
@@ -4615,12 +4619,12 @@ function renderPreviewRelatorio(){
   d.lista.forEach((p,i)=>{
     html+=`<tr>
       <td>${i+1}</td>
-      <td>${p.numero||'—'}</td>
-      <td>${(p.descricao||'—')}${p.responsaveis&&p.responsaveis.length?'<br><i style="color:#888">Resp.: '+p.responsaveis.join(', ')+'</i>':''}</td>
-      <td>${p.unidade||'—'}</td>
-      <td>${p.status||'—'}</td>
-      <td>${p.urgencia||'—'}</td>
-      <td>${p.dataAtualizacao||'—'}</td>
+      <td>${_escHtml(p.numero)||'—'}</td>
+      <td>${_escHtml(p.descricao)||'—'}${p.responsaveis&&p.responsaveis.length?'<br><i style="color:#888">Resp.: '+_escHtml(p.responsaveis.join(', '))+'</i>':''}</td>
+      <td>${_escHtml(p.unidade)||'—'}</td>
+      <td>${_escHtml(p.status)||'—'}</td>
+      <td>${_escHtml(p.urgencia)||'—'}</td>
+      <td>${_escHtml(p.dataAtualizacao)||'—'}</td>
     </tr>`;
   });
   html+=`</table>`;
