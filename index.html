@@ -2621,7 +2621,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.09.24';
+const APP_VERSION = '2026.09.24.2';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -2963,7 +2963,7 @@ function renderDashboard(){
       dr.innerHTML=`<div class="rank-list">`+respEntries.map(([nome,cnt],i)=>{
         const pct=Math.round((cnt/maxResp)*100);
         const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
-        return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${_escHtml(nome)}">
+        return `<div class="rank-row" onclick="filtrarResp(_argVal(${_safeArg(nome)}))" title="Ver processos de ${_escHtml(nome)}">
           <div class="rank-pos">${i+1}</div>
           <div class="rank-av">${_escHtml(init)}</div>
           <div class="rank-nome" title="${_escHtml(nome)}">${_escHtml(nome)}</div>
@@ -3878,6 +3878,9 @@ function exportCSV(){
 // VIEWS
 // ========================================
 function showView(v){
+  // Telas restritas: menu já some para membro, mas a tela ainda abria se
+  // chamada por outro caminho (link/atalho). Membro volta para Processos.
+  if((v==='admin'||v==='relatorios') && STATE.currentUser?.role!=='admin') v='processos';
   const VTITLES={'processos':'Processos SEI','dashboard':'Dashboard Analytics','spaei-sync':'Integração SPAEI','admin':'Painel Admin','perfil':'Meu Perfil','relatorios':'Central de Relatórios'};
   const tvt=document.getElementById('topbar-view-title');
   if(tvt) tvt.textContent=VTITLES[v]||v;
@@ -4091,7 +4094,7 @@ function renderMembrosCarga(){
   el.innerHTML=sorted.map(([nome,cnt])=>{
     const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/i.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0].toUpperCase();
     const pct=Math.round((cnt/maxC)*100);
-    return `<div class="membro-carga-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')">
+    return `<div class="membro-carga-row" onclick="filtrarResp(_argVal(${_safeArg(nome)}))">
       <div class="mc-avatar">${_escHtml(init)}</div>
       <div style="flex:1;min-width:0">
         <div class="mc-nome" title="${_escHtml(nome)}">${_escHtml(nome)}</div>
@@ -4167,7 +4170,7 @@ function renderRankingRelatorios(){
   cont.innerHTML=`<div class="rank-list">`+entries.map(([nome,cnt],i)=>{
     const pct=Math.round((cnt/max)*100);
     const init=nome.split(' ').filter(w=>/^[A-ZÀ-Ú]/.test(w)).slice(-1).map(w=>w[0]).join('')||nome[0];
-    return `<div class="rank-row" onclick="filtrarResp('${nome.replace(/'/g,"\\'")}')" title="Ver processos de ${_escHtml(nome)}">
+    return `<div class="rank-row" onclick="filtrarResp(_argVal(${_safeArg(nome)}))" title="Ver processos de ${_escHtml(nome)}">
       <div class="rank-pos">${i+1}</div>
       <div class="rank-av">${_escHtml(init)}</div>
       <div class="rank-nome" title="${_escHtml(nome)}">${_escHtml(nome)}</div>
@@ -4941,27 +4944,12 @@ window.onload=()=>{
     const s=sessionStorage.getItem('sei_session');
     if(s){
       const u=JSON.parse(s);
+      if(!u||!u.nome||!u.role) throw new Error('sessão inválida');
+      // Mesmo caminho do login (antes esta restauração repetia só parte dele:
+      // relógio parado, perfil "---", botões Novo/Sincronizar sem ajuste por
+      // perfil, lista de responsáveis do filtro vazia após recarregar a página).
       STATE.currentUser=u;
-      document.getElementById('login-screen').classList.add('hidden');
-      document.getElementById('app').classList.add('visible');
-      const av=document.getElementById('user-avatar');
-      const nm=document.getElementById('user-name-display');
-      const rb=document.getElementById('role-badge');
-      if(av) av.textContent=(u.nome||'?')[0];
-      if(nm) nm.textContent=u.nome||'';
-      if(rb&&u.role==='admin') rb.style.display='inline-flex';
-      const na=document.getElementById('nav-admin');
-      if(na&&u.role==='admin') na.style.display='flex';
-      const ma=document.getElementById('menu-admin-link');
-      if(ma&&u.role==='admin') ma.style.display='flex';
-      if(u.role==='admin'){
-        const nr=document.getElementById('nav-relatorios'); if(nr) nr.style.display='flex';
-        const mnr=document.getElementById('mnav-relatorios'); if(mnr) mnr.style.display='flex';
-        setTimeout(()=>{ try{ verificarLembretesRelatorio(); }catch(e){}
-        try{ if(!sessionStorage.getItem('sei_alerta_prazo')){ alertaPrazoEntrada(); sessionStorage.setItem('sei_alerta_prazo','1'); } }catch(e){}
-        try{ backupAutomaticoSeNecessario(); }catch(e){} }, 2800);
-      }
-      listenFirebase();
+      iniciarApp();
       return;
     }
   }catch(e){}
