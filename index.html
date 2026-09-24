@@ -1600,6 +1600,7 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
               <option value="">Todos os Status</option>
               <option>Em Andamento</option>
               <option>Aguardando</option>
+              <option>Fase Preparatória</option>
               <option>Finalizado</option>
               <option>Cancelado</option>
               <option>Baixado</option>
@@ -2080,7 +2081,7 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
                 <label>Status</label>
                 <select id="rel-status">
                   <option value="">Todos os status</option>
-                  <option>Em Andamento</option><option>Aguardando</option><option>Finalizado</option>
+                  <option>Em Andamento</option><option>Aguardando</option><option>Fase Preparatória</option><option>Finalizado</option>
                   <option>Baixado</option><option>Encerrado</option><option>Cancelado</option>
                 </select>
               </div>
@@ -2219,7 +2220,7 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
         <div class="form-field">
           <label>Status</label>
           <select id="mp-status">
-            <option>Em Andamento</option><option>Aguardando</option>
+            <option>Em Andamento</option><option>Aguardando</option><option>Fase Preparatória</option>
             <option>Finalizado</option><option>Cancelado</option>
             <option>Baixado</option><option>Encerrado</option>
           </select>
@@ -2620,7 +2621,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.09.10.2';
+const APP_VERSION = '2026.09.24';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -2910,7 +2911,7 @@ function renderTable(){
 function truncate(s,n){if(!s)return'';return s.length>n?s.slice(0,n)+'…':s}
 
 function getStatusBadge(s){
-  const m={'Em Andamento':'em-andamento','Aguardando':'aguardando','Finalizado':'finalizado','Cancelado':'cancelado','Baixado':'baixado','Encerrado':'encerrado'};
+  const m={'Em Andamento':'em-andamento','Aguardando':'aguardando','Finalizado':'finalizado','Cancelado':'cancelado','Baixado':'baixado','Encerrado':'encerrado','Fase Preparatória':'em-andamento','Concluído':'finalizado'};
   return `<span class="badge badge-${m[s]||'normal'}">${_escHtml(s)||'—'}</span>`;
 }
 function getUrgBadge(u){
@@ -3116,7 +3117,10 @@ function abrirModalEditar(id){
   document.getElementById('mp-numero').value=proc.numero||'';
   document.getElementById('mp-descricao').value=proc.descricao||'';
   document.getElementById('mp-unidade').value=proc.unidade||'COE';
-  document.getElementById('mp-status').value=proc.status||'Em Andamento';
+  // 'Concluído' era gravado por versões antigas do SPAEI DIGITAL e não existe
+  // neste select — sem isso o campo ficava vazio e salvar gravava status ''.
+  document.getElementById('mp-status').value=(proc.status==='Concluído'?'Finalizado':proc.status)||'Em Andamento';
+  if(!document.getElementById('mp-status').value) document.getElementById('mp-status').value='Em Andamento';
   document.getElementById('mp-urgencia').value=proc.urgencia||'Normal';
   document.getElementById('mp-pca').value=proc.pca||'';
   document.getElementById('mp-dataatualizacao').value=proc.dataAtualizacao||'';
