@@ -2621,7 +2621,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.09.24.2';
+const APP_VERSION = '2026.09.24.3';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -3096,7 +3096,7 @@ function abrirModalNovo(){
   document.getElementById('mp-obs').value='';
   const _catN=document.getElementById('mp-categoria');if(_catN)_catN.value='';
   const _subN=document.getElementById('mp-subtipo');if(_subN)_subN.value='';
-  document.getElementById('mp-spaei').checked=false;
+  document.getElementById('mp-spaei').checked=true; // padrão: processo novo já vai para o SPAEI DIGITAL (admin pode desmarcar)
   document.getElementById('btn-marcar-dup').style.display='none';
   document.getElementById('btn-excluir').style.display='none';
   document.getElementById('mp-historico-wrap').style.display='none';
@@ -3112,6 +3112,7 @@ function abrirModalEditar(id){
   const proc=STATE.processos[id];
   if(!proc) return;
   STATE.editingId=id;
+  STATE._editSnapshot={id, dados:JSON.parse(JSON.stringify(proc))};
   document.getElementById('modal-processo-title').textContent='Editar Processo SEI';
   document.getElementById('mp-id').value=id;
   document.getElementById('mp-numero').value=proc.numero||'';
@@ -3257,11 +3258,44 @@ async function salvarProcesso(){
 
   try{
     const id=STATE.editingId||db.ref('/sei-digital/processos').push().key;
-    await db.ref(`/sei-digital/processos/${id}`).set(dados);
+    let final=dados;
+    if(STATE.editingId){
+      // Junção campo a campo: vale o formulário só nos campos que ESTE usuário
+      // alterou desde que abriu o modal; os demais ficam com o valor ATUAL do
+      // banco (ex.: movimentação feita pelo SPAEI DIGITAL nesse meio tempo).
+      // Histórico: o do banco + a entrada desta edição. Antes, set() gravava o
+      // formulário inteiro e apagava o que tivesse mudado nesse intervalo.
+      const base0=(STATE._editSnapshot&&STATE._editSnapshot.id===id)?STATE._editSnapshot.dados:(oldProc||{});
+      const norm=v=>{ if(v===undefined||v===null) return null; if(typeof v==='string') return v.trim()||null; if(Array.isArray(v)) return v.length?JSON.stringify(v):null; return JSON.stringify(v); };
+      const IGN=['historico','dataCriacao','dataModificacao','spaeiSyncAt','duplicata'];
+      const novaEntrada=histTexto?historico[historico.length-1]:null;
+      final=await new Promise((res,rej)=>{
+        db.ref(`/sei-digital/processos/${id}`).transaction(cur=>{
+          if(!cur||typeof cur!=='object') return dados; // registro não existe mais no banco: grava o formulário
+          const out=Object.assign({},cur);
+          Object.keys(dados).forEach(k=>{
+            if(IGN.includes(k)) return;
+            if(norm(dados[k])!==norm(base0[k]) || !(k in cur)) out[k]=dados[k];
+          });
+          const hist=Array.isArray(cur.historico)?cur.historico.slice():(cur.historico&&typeof cur.historico==='object'?Object.values(cur.historico):[]);
+          if(novaEntrada) hist.push(novaEntrada);
+          out.historico=hist;
+          out.dataModificacao=agora;
+          out.dataCriacao=cur.dataCriacao||dados.dataCriacao;
+          out.duplicata=cur.duplicata||false;
+          out.spaeiSyncAt=out.spaeiSync?(cur.spaeiSyncAt||agora):null;
+          Object.keys(out).forEach(k=>{ if(out[k]===undefined) delete out[k]; });
+          return out;
+        },(err,ok,snap)=>{ if(err) return rej(err); res((ok&&snap&&snap.val())||dados); });
+      });
+    } else {
+      await db.ref(`/sei-digital/processos/${id}`).set(dados);
+    }
+    STATE._editSnapshot=null;
 
     // Sync SPAEI
     if(spaeiSync){
-      await syncProcessoSPAEI(id,dados);
+      await syncProcessoSPAEI(id,final);
     } else if(oldProc?.spaeiSync && !spaeiSync){
       // Remove do SPAEI
       await db.ref(`/spaei-digital/sei-processos/${id}`).remove();
