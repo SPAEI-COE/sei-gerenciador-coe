@@ -192,7 +192,7 @@ function _renderKpiContent(procs){
     }
     const respHtml=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${_escHtml(r)}</span>`).join('');
     const unBadge=proc.unidade?`<span class="badge badge-normal" style="font-size:.58rem">${_escHtml(proc.unidade)}</span>`:'';
-    const spaeiIco=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sync SPAEI"></i>`:'';
+    const spaeiIco=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sync SPAEI"></i>`:_alertaForaSpaei(proc);
     const critIco=proc.urgencia==='Crítica'?`<i class="fas fa-fire" style="color:var(--red);font-size:.65rem"></i>`:'';
     return `<div class="kpi-proc-item" onclick="fecharKpiAbrirModal('${procId}')">
       <div class="kpi-proc-numero">${_escHtml(proc.numero)||'—'}</div>
@@ -1802,6 +1802,9 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
             <button class="btn btn-spaei" onclick="syncAllSPAEI()">
               <i class="fas fa-sync-alt"></i> Sincronizar Todos com SPAEI
             </button>
+            <button class="btn btn-spaei" id="btn-sync-pend" style="display:none" onclick="syncPendentesComResponsavel()">
+              <i class="fas fa-exclamation-triangle"></i> Sincronizar pendentes com responsável (<span id="n-sync-pend">0</span>)
+            </button>
             <button class="btn btn-secondary" onclick="clearSPAEISync()">
               <i class="fas fa-unlink"></i> Limpar Sincronização
             </button>
@@ -2621,7 +2624,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.09.24.3';
+const APP_VERSION = '2026.10.13';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -2891,7 +2894,7 @@ function renderTable(){
     }
     const resps=(proc.responsaveis||[]).map(r=>`<span class="resp-pill">${_escHtml(r)}</span>`).join('');
     const pcaHtml=proc.pca?`<span class="pca-chip">${_escHtml(proc.pca)}</span>`:'<span style="color:var(--text-dim)">—</span>';
-    const spaeiHtml=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sincronizado com SPAEI DIGITAL em ${new Date(proc.spaeiSyncAt||0).toLocaleDateString('pt-BR')}"></i>`:'<span style="color:var(--text-dim)">—</span>';
+    const spaeiHtml=proc.spaeiSync?`<i class="fas fa-check-circle spaei-sync-icon" title="Sincronizado com SPAEI DIGITAL em ${new Date(proc.spaeiSyncAt||0).toLocaleDateString('pt-BR')}"></i>`:(_alertaForaSpaei(proc)||'<span style="color:var(--text-dim)">—</span>');
     const editBtns=STATE.currentUser?.role==='admin'?`<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();abrirModalEditar('${proc.id}')"><i class="fas fa-edit"></i></button>`:'';
     return `<tr onclick="abrirModalEditar('${proc.id}')">
       <td class="td-numero">${proc.duplicata?'<span class="badge badge-dup">DUP</span> ':''}<span title="${_escHtml(proc.numero)}">${_escHtml(truncate(proc.numero,22))}</span></td>
@@ -3040,6 +3043,11 @@ function renderSPAEIView(){
   const lastSync=sincronizados.reduce((a,b)=>Math.max(a,b.spaeiSyncAt||0),0);
   const s3=document.getElementById('s-ultima');
   if(s3) s3.textContent=lastSync?new Date(lastSync).toLocaleTimeString('pt-BR'):'—';
+  const nPend=_pendentesComResp().length, bPend=document.getElementById('btn-sync-pend');
+  if(bPend){
+    bPend.style.display=(nPend>0&&STATE.currentUser?.role==='admin')?'':'none';
+    const sp=document.getElementById('n-sync-pend'); if(sp) sp.textContent=nPend;
+  }
 
   const tbody=document.getElementById('spaei-table-body');
   if(!tbody) return;
@@ -3078,6 +3086,57 @@ function buildRespBoxes(){
 function toggleResp(el){
   el.classList.toggle('selected');
   el.querySelector('input').checked=el.classList.contains('selected');
+  // Responsável atribuído => o processo precisa chegar ao SPAEI DIGITAL dele.
+  // Marca "Sync SPAEI" automaticamente (o admin ainda pode desmarcar depois).
+  if(el.classList.contains('selected')){
+    const cb=document.getElementById('mp-spaei');
+    if(cb && !cb.checked){
+      cb.checked=true;
+      showToast('"Sync SPAEI" marcado: o responsável precisa receber este processo no SPAEI DIGITAL.','info');
+    }
+  }
+}
+
+// Processo COM responsável mas SEM Sync SPAEI: o responsável nunca o recebe
+// (nem no SPAEI DIGITAL nem no Telegram). Sinaliza na lista e permite corrigir.
+function _alertaForaSpaei(proc){
+  if(!proc||proc.spaeiSync||!(proc.responsaveis||[]).length) return '';
+  return '<i class="fas fa-exclamation-triangle" style="color:var(--gold)" title="Responsável atribuído, mas o processo está FORA do SPAEI DIGITAL. Marque &quot;Sync SPAEI&quot; para o responsável recebê-lo."></i>';
+}
+function _pendentesComResp(){
+  return Object.entries(STATE.processos).filter(([,v])=>v&&!v.spaeiSync&&!v.duplicata&&(v.responsaveis||[]).length&&!['Finalizado','Cancelado','Encerrado','Baixado'].includes(v.status));
+}
+async function syncPendentesComResponsavel(){
+  if(STATE.currentUser?.role!=='admin'){showToast('Apenas administradores podem sincronizar.','error');return;}
+  const lista=_pendentesComResp();
+  if(!lista.length){showToast('Nenhum processo com responsável fora do SPAEI.','info');return;}
+  confirmar('Sincronizar pendentes com responsável',
+    `${lista.length} processo(s) têm responsável atribuído mas NÃO estão marcados "Sync SPAEI". Eles serão enviados ao SPAEI DIGITAL e os responsáveis já vinculados ao Telegram serão avisados. Continuar?`,
+    async()=>{
+      const agora=Date.now(), por=STATE.currentUser.nome||'Admin';
+      let ok=0, erros=0;
+      for(const [id] of lista){
+        try{
+          // Transação: só liga o flag e acrescenta ao histórico — nunca sobrescreve
+          // outros campos que alguém tenha mudado nesse meio tempo.
+          const final=await new Promise((res,rej)=>{
+            db.ref(`/sei-digital/processos/${id}`).transaction(cur=>{
+              if(!cur||typeof cur!=='object') return;   // sumiu do banco: não recria
+              if(cur.spaeiSync) return;                  // alguém já marcou: nada a gravar
+              const out=Object.assign({},cur,{spaeiSync:true,spaeiSyncAt:agora,dataModificacao:agora});
+              const hist=Array.isArray(cur.historico)?cur.historico.slice():(cur.historico&&typeof cur.historico==='object'?Object.values(cur.historico):[]);
+              hist.push({texto:'Sync SPAEI marcado (responsável atribuído).',data:new Date().toLocaleString('pt-BR'),por});
+              out.historico=hist;
+              return out;
+            },(err,done,snap)=>{ if(err) return rej(err); res(snap?snap.val():null); });
+          });
+          if(!final||!final.spaeiSync) continue;
+          await syncProcessoSPAEI(id,final);
+          ok++;
+        }catch(e){ erros++; console.error('syncPendentesComResponsavel',id,e); }
+      }
+      showToast(`${ok} processo(s) enviado(s) ao SPAEI DIGITAL${erros?` · ${erros} com erro`:''}.`,erros?'error':'success');
+    });
 }
 
 function abrirModalNovo(){
