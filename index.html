@@ -2287,7 +2287,7 @@ td{padding:10px 14px;font-size:.82rem;vertical-align:middle}
     </div>
     <div class="modal-footer">
       <button class="btn btn-danger btn-sm" id="btn-marcar-dup" onclick="marcarDuplicata()" style="display:none">
-        <i class="fas fa-copy"></i> Duplicata
+        <i class="fas fa-copy"></i> <span id="btn-dup-txt">Duplicata</span>
       </button>
       <button class="btn btn-danger btn-sm" id="btn-excluir" onclick="excluirProcesso()" style="display:none">
         <i class="fas fa-trash"></i> Excluir
@@ -2624,7 +2624,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.10.13';
+const APP_VERSION = '2026.10.13.2';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -3207,6 +3207,7 @@ function abrirModalEditar(id){
 
   const isAdmin=STATE.currentUser?.role==='admin';
   document.getElementById('btn-marcar-dup').style.display=isAdmin?'inline-flex':'none';
+  const _bdt=document.getElementById('btn-dup-txt'); if(_bdt) _bdt.textContent=proc.duplicata?'Remover marca de duplicata':'Duplicata';
   document.getElementById('btn-excluir').style.display=isAdmin?'inline-flex':'none';
 
   // Lock fields for membros
@@ -3266,11 +3267,37 @@ function limparFiltroHistorico(){
   renderTimelineHistorico();
 }
 
+// Chave de comparação de número SEI / texto: ignora caixa, espaços e acentos.
+function _chaveCmp(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase(); }
+// Outro processo (não duplicata) com o mesmo número SEI. `mesmaDesc` = também mesma descrição e unidade.
+function _acharNumeroRepetido(numero,descricao,unidade,ignorarId){
+  const n=_chaveCmp(numero), d=_chaveCmp(descricao), u=_chaveCmp(unidade);
+  let outro=null, igual=null;
+  for(const [id,v] of Object.entries(STATE.processos)){
+    if(!v||id===ignorarId||v.duplicata||_chaveCmp(v.numero)!==n) continue;
+    outro=outro||{id,proc:v};
+    if(_chaveCmp(v.descricao)===d&&_chaveCmp(v.unidade)===u){ igual={id,proc:v}; break; }
+  }
+  return {outro,igual};
+}
+let _salvandoProc=false;
 async function salvarProcesso(){
   if(STATE.currentUser?.role!=='admin'){showToast('Apenas administradores podem salvar processos.','error');return;}
+  // Anti duplo-clique: dois cliques seguidos em "Salvar" criavam o MESMO processo duas vezes
+  // (par idêntico gravado com 0,7 s de diferença em produção) e o SPAEI recebia/notificava em dobro.
+  if(_salvandoProc) return;
   const numero=document.getElementById('mp-numero').value.trim();
   const descricao=document.getElementById('mp-descricao').value.trim();
   if(!numero||!descricao){showToast('Número SEI e Descrição são obrigatórios.','error');return;}
+  if(!STATE.editingId){
+    const rep=_acharNumeroRepetido(numero,descricao,document.getElementById('mp-unidade').value,null);
+    if(rep.igual){showToast('Este processo já está cadastrado (mesmo número, unidade e descrição). Abra o existente para editar.','error');return;}
+    if(rep.outro) showToast('Atenção: já existe outro processo com este número SEI ('+rep.outro.proc.unidade+'). Confira se não é repetido.','info');
+  }
+  _salvandoProc=true;
+  try{ await _salvarProcessoCore(numero,descricao); } finally { _salvandoProc=false; }
+}
+async function _salvarProcessoCore(numero,descricao){
 
   const resps=[];
   document.querySelectorAll('.resp-checkbox-item.selected').forEach(el=>resps.push(el.dataset.nome));
@@ -3388,13 +3415,22 @@ async function syncProcessoSPAEI(id, dados){
 
 async function syncAllSPAEI(){
   if(STATE.currentUser?.role!=='admin'){showToast('Apenas administradores podem sincronizar.','error');return;}
-  const p=Object.entries(STATE.processos).filter(([,v])=>v.spaeiSync);
-  if(p.length===0){showToast('Nenhum processo marcado para SPAEI.','info');return;}
+  const todos=Object.entries(STATE.processos).filter(([,v])=>v&&v.spaeiSync);
+  // Duplicata marcada não vai ao SPAEI: retira o espelho e desliga o sync em vez de reenviar.
+  const dups=todos.filter(([,v])=>v.duplicata), p=todos.filter(([,v])=>!v.duplicata);
+  if(p.length===0&&dups.length===0){showToast('Nenhum processo marcado para SPAEI.','info');return;}
   showToast(`Sincronizando ${p.length} processo(s)...`,'info');
   for(const [id,dados] of p){
     await syncProcessoSPAEI(id,dados);
   }
-  showToast(`${p.length} processo(s) sincronizado(s) com SPAEI DIGITAL!`,'success');
+  for(const [id] of dups){
+    await db.ref().update({
+      [`sei-digital/processos/${id}/spaeiSync`]:false,
+      [`sei-digital/processos/${id}/spaeiSyncAt`]:null,
+      [`spaei-digital/sei-processos/${id}`]:null
+    });
+  }
+  showToast(`${p.length} processo(s) sincronizado(s) com SPAEI DIGITAL!`+(dups.length?` ${dups.length} duplicata(s) retirada(s) do SPAEI.`:''),'success');
 }
 
 async function clearSPAEISync(){
@@ -3406,11 +3442,27 @@ async function clearSPAEISync(){
 }
 
 function marcarDuplicata(){
-  if(!STATE.editingId) return;
-  confirmar('Marcar como Duplicata','Marcar este processo como duplicata?',async()=>{
-    await db.ref(`/sei-digital/processos/${STATE.editingId}/duplicata`).set(true);
+  if(!STATE.editingId||STATE.currentUser?.role!=='admin') return;
+  const id=STATE.editingId, proc=STATE.processos[id]||{};
+  if(proc.duplicata){
+    confirmar('Remover marca de duplicata','O processo voltará a contar nas listas. Ele NÃO volta sozinho ao SPAEI DIGITAL: se for o caso, marque "Sync SPAEI" e salve. Continuar?',async()=>{
+      await db.ref(`/sei-digital/processos/${id}/duplicata`).set(false);
+      fecharModal('modal-processo');
+      showToast('Marca de duplicata removida.','info');
+    });
+    return;
+  }
+  confirmar('Marcar como Duplicata','Marcar este processo como duplicata? Ele também será retirado do SPAEI DIGITAL (os responsáveis deixam de vê-lo lá).',async()=>{
+    // Uma única gravação atômica: marca, desliga o sync e remove o espelho do SPAEI.
+    // Antes só a marca era gravada e o duplicado continuava aparecendo no SPAEI.
+    await db.ref().update({
+      [`sei-digital/processos/${id}/duplicata`]:true,
+      [`sei-digital/processos/${id}/spaeiSync`]:false,
+      [`sei-digital/processos/${id}/spaeiSyncAt`]:null,
+      [`spaei-digital/sei-processos/${id}`]:null
+    });
     fecharModal('modal-processo');
-    showToast('Processo marcado como duplicata.','info');
+    showToast('Processo marcado como duplicata e retirado do SPAEI DIGITAL.','info');
   });
 }
 
