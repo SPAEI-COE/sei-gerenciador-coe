@@ -2467,6 +2467,8 @@ let STATE = {
   filterPrazo: '', // '', '3', '7' — alerta de prazo em dias
   editingId: null,
   isOnline: false,
+  espelho: {},
+  espelhoOk: false,
 };
 
 // Parser universal de prazo: aceita 'aaaa-mm-dd' (input date) e 'dd/mm/aaaa' (SEED)
@@ -2575,6 +2577,7 @@ function showLoginError(msg){
 // APP INIT
 // ========================================
 function iniciarApp(){
+  setTimeout(agendarReconciliacao,0); // admin logado: confere o espelho do SPAEI assim que as bases chegarem
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.add('visible');
   try{sessionStorage.setItem('sei_session',JSON.stringify(STATE.currentUser));}catch(e){}
@@ -2624,7 +2627,7 @@ function doLogout(){
 // ========================================
 // Versão atual embarcada no build. Ao publicar, atualize também version.json
 // no repositório com o mesmo número para a verificação "inteligente" funcionar.
-const APP_VERSION = '2026.10.13.2';
+const APP_VERSION = '2026.10.28.1';
 
 async function forceAppUpdate(){
   const btn=document.getElementById('update-btn');
@@ -2694,8 +2697,15 @@ function listenFirebase(){
   db.ref('/sei-digital/processos').on('value', snap=>{
     STATE.processos = snap.val() || {};
     if(Object.keys(STATE.processos).length===0) verificarSeedProcessos();
-    updateUI();
+    updateUIAgendado();
   });
+  // Espelho no SPAEI DIGITAL: o Gerenciador passa a SABER o que o SPAEI realmente tem
+  // (antes só gravava e nunca conferia — divergências ficavam para sempre).
+  db.ref('/spaei-digital/sei-processos').on('value', snap=>{
+    STATE.espelho = snap.val() || {};
+    STATE.espelhoOk = true;
+    agendarReconciliacao();
+  }, err=>{ console.error('Espelho SPAEI: listener cancelado',err&&(err.code||err.message)); STATE.espelhoOk=false; });
   // Membros
   db.ref('/sei-digital/membros').on('value', snap=>{
     STATE.membros = snap.val() || {};
@@ -2764,7 +2774,7 @@ async function carregarProcessosSeed(){
     console.error('Seed processos error:',e);
     // Fallback: carregar em STATE diretamente
     STATE.processos = {...SEED_PROCESSOS};
-    updateUI();
+    updateUIAgendado();
     showToast('Processos carregados localmente (offline).','info');
   }
 }
@@ -2772,6 +2782,13 @@ async function carregarProcessosSeed(){
 // ========================================
 // UI UPDATE
 // ========================================
+// v2026.10.28 — vários eventos seguidos (lote de sync, reconciliação) viravam um
+// re-render COMPLETO (tabela + dashboard + SPAEI) por evento. Agora no máximo 1 por quadro.
+let _uiT=null;
+function updateUIAgendado(){
+  if(_uiT) return;
+  _uiT=setTimeout(()=>{ _uiT=null; try{ updateUI(); }catch(e){ console.error('updateUI',e); } agendarReconciliacao(); },40);
+}
 function updateUI(){
   calcStats();
   renderTable();
@@ -3395,8 +3412,10 @@ async function _salvarProcessoCore(numero,descricao){
   }
 }
 
-async function syncProcessoSPAEI(id, dados){
-  const payload={
+// ── Espelho SPAEI DIGITAL ────────────────────────────────────────────────
+// Monta o que o SPAEI DIGITAL recebe de cada processo.
+function _payloadSpaei(dados){
+  return {
     numero:dados.numero,
     descricao:dados.descricao,
     responsaveis:dados.responsaveis||[],
@@ -3409,28 +3428,136 @@ async function syncProcessoSPAEI(id, dados){
     atualizadoEm:Date.now(),
     origem:'SEI_DIGITAL_COE',
   };
-  await db.ref(`/spaei-digital/sei-processos/${id}`).set(payload);
-  await db.ref(`/sei-digital/processos/${id}/spaeiSyncAt`).set(Date.now());
+}
+const _STATUS_FINAIS=['Finalizado','Cancelado','Encerrado','Baixado'];
+const _CAMPOS_ESPELHO=['numero','descricao','responsaveis','prazo','urgencia','status','unidade','observacoes','pca'];
+function _listaResp(v){ return Array.isArray(v)?v.slice():(v&&typeof v==='object'?Object.values(v):[]); }
+function _normEsp(k,v){
+  if(k==='responsaveis') return JSON.stringify(_listaResp(v));
+  return (v===undefined||v===null||v==='')?'':String(v);
+}
+function _espelhoDifere(payload,atual){
+  if(!atual||typeof atual!=='object') return true;
+  return _CAMPOS_ESPELHO.some(k=>_normEsp(k,payload[k])!==_normEsp(k,atual[k]));
+}
+// Grava processo + espelho numa ÚNICA gravação atômica (antes: 2 set() seguidos, e o 1º
+// sobrescrevia o espelho inteiro — apagando movimentação feita no SPAEI nesse meio tempo).
+async function syncProcessoSPAEI(id, dados){
+  const agora=Date.now();
+  await db.ref().update({
+    [`spaei-digital/sei-processos/${id}`]:_payloadSpaei(dados),
+    [`sei-digital/processos/${id}/spaeiSyncAt`]:agora,
+  });
+}
+
+// Compara a base do SEI (fonte da verdade) com o espelho do SPAEI e calcula o que
+// falta fazer. Função PURA (sem rede) — é o que os testes exercitam.
+//   escrever: processo marcado "Sync SPAEI" cujo espelho falta ou difere
+//   remover:  espelho de duplicata / processo excluído / sync desligado
+//   adotar:   movimentação feita no SPAEI mais nova que a base do SEI (não se perde)
+function planejarReconciliacao(processos,espelho,opts){
+  opts=opts||{};
+  processos=processos||{}; espelho=espelho||{};
+  const plano={escrever:[],remover:[],adotar:[],marcarSyncAt:[]};
+  Object.entries(processos).forEach(([id,a])=>{
+    if(!a||typeof a!=='object') return;
+    const b=espelho[id];
+    const deveEspelhar=!!a.spaeiSync&&!a.duplicata;
+    if(!deveEspelhar){
+      if(b && (b.origem==='SEI_DIGITAL_COE' || a.duplicata)) plano.remover.push(id);
+      return;
+    }
+    if(!b){ plano.escrever.push(id); return; }
+    // Movimentação do SPAEI mais nova que a base: traz para o SEI em vez de apagar.
+    const tB=Number(b.atualizadoEm)||0, tA=Math.max(Number(a.dataModificacao)||0,Number(a.spaeiSyncAt)||0);
+    const movSpaei=!!b.movimentadoPor && tB>tA;
+    if(movSpaei && (_normEsp('status',b.status)!==_normEsp('status',a.status) || _normEsp('observacoes',b.observacoes)!==_normEsp('observacoes',a.observacoes))){
+      plano.adotar.push(id); return;
+    }
+    if(opts.forcar || _espelhoDifere(_payloadSpaei(a),b)) plano.escrever.push(id);
+    else if(!a.spaeiSyncAt) plano.marcarSyncAt.push(id);
+  });
+  Object.keys(espelho).forEach(id=>{
+    const b=espelho[id];
+    if(!processos[id] && b && b.origem==='SEI_DIGITAL_COE' && !plano.remover.includes(id)) plano.remover.push(id);
+  });
+  return plano;
+}
+
+// Aplica o plano em gravações multi-caminho de até 100 caminhos (atômicas por lote, 1
+// evento de listener por lote) em vez de 2 viagens à rede por processo, em série.
+async function aplicarPlano(plano){
+  const agora=Date.now(), upd={};
+  plano.escrever.forEach(id=>{
+    upd[`spaei-digital/sei-processos/${id}`]=_payloadSpaei(STATE.processos[id]);
+    upd[`sei-digital/processos/${id}/spaeiSyncAt`]=agora;
+  });
+  plano.marcarSyncAt.forEach(id=>{ upd[`sei-digital/processos/${id}/spaeiSyncAt`]=agora; });
+  plano.remover.forEach(id=>{
+    upd[`spaei-digital/sei-processos/${id}`]=null;
+    if(STATE.processos[id]) upd[`sei-digital/processos/${id}/spaeiSync`]=false, upd[`sei-digital/processos/${id}/spaeiSyncAt`]=null;
+  });
+  const caminhos=Object.keys(upd);
+  for(let i=0;i<caminhos.length;i+=100){
+    const lote={}; caminhos.slice(i,i+100).forEach(k=>lote[k]=upd[k]);
+    await db.ref().update(lote);
+  }
+  // Adoção: transação (nunca sobrescreve outros campos alterados no meio tempo).
+  for(const id of plano.adotar){
+    const b=(STATE.espelho||{})[id]; if(!b) continue;
+    await new Promise((res,rej)=>{
+      db.ref(`/sei-digital/processos/${id}`).transaction(cur=>{
+        if(!cur||typeof cur!=='object') return;
+        const tB=Number(b.atualizadoEm)||0;
+        if(tB<=Math.max(Number(cur.dataModificacao)||0,Number(cur.spaeiSyncAt)||0)) return; // alguém já atualizou
+        const out=Object.assign({},cur,{status:b.status,dataModificacao:tB,spaeiSyncAt:tB});
+        if(b.observacoes!=null) out.observacoes=b.observacoes;
+        const hist=Array.isArray(cur.historico)?cur.historico.slice():(cur.historico&&typeof cur.historico==='object'?Object.values(cur.historico):[]);
+        hist.push({texto:`Status: ${cur.status||'—'} → ${b.status} (movimentação recuperada do SPAEI DIGITAL${b.movimentadoPor?' · '+b.movimentadoPor:''})`,data:new Date(tB).toLocaleString('pt-BR'),por:(b.movimentadoPor||'SPAEI')+' (SPAEI DIGITAL)'});
+        out.historico=hist; return out;
+      },(err)=>err?rej(err):res(),false);
+    });
+  }
+  return caminhos.length+plano.adotar.length;
+}
+
+// Reconciliação AUTOMÁTICA: roda quando um administrador está logado e as duas bases
+// (processos e espelho) já chegaram. Idempotente: sem diferença, não grava nada — logo
+// não gera eco de listener nem loop.
+let _recT=null, _recRodando=false, _recUltimo={n:0,em:0};
+function agendarReconciliacao(){
+  if(_recT) return;
+  _recT=setTimeout(()=>{ _recT=null; reconciliarSPAEI(false).catch(e=>console.error('reconciliarSPAEI',e)); },1500);
+}
+async function reconciliarSPAEI(manual){
+  if(_recRodando) return 0;
+  if(STATE.currentUser?.role!=='admin'||!STATE.espelhoOk||!STATE.processos) return 0;
+  const plano=planejarReconciliacao(STATE.processos,STATE.espelho,{forcar:!!manual});
+  const total=plano.escrever.length+plano.remover.length+plano.adotar.length+plano.marcarSyncAt.length;
+  if(!total) return 0;
+  // Trava de segurança: sem ação do usuário, não mexe em mais de 150 caminhos de uma vez.
+  if(!manual && total>150){ console.warn('Reconciliação automática adiada: '+total+' itens (use "Sync SPAEI").'); return 0; }
+  _recRodando=true;
+  try{
+    const n=await aplicarPlano(plano);
+    _recUltimo={n:total,em:Date.now()};
+    console.info('[SPAEI] reconciliado:',{escritos:plano.escrever.length,removidos:plano.remover.length,adotados:plano.adotar.length});
+    if(!manual) showToast(`SPAEI DIGITAL conferido: ${plano.escrever.length} atualizado(s), ${plano.remover.length} removido(s)${plano.adotar.length?`, ${plano.adotar.length} movimentação(ões) recuperada(s)`:''}.`,'info');
+    return n;
+  } finally { _recRodando=false; }
 }
 
 async function syncAllSPAEI(){
   if(STATE.currentUser?.role!=='admin'){showToast('Apenas administradores podem sincronizar.','error');return;}
-  const todos=Object.entries(STATE.processos).filter(([,v])=>v&&v.spaeiSync);
-  // Duplicata marcada não vai ao SPAEI: retira o espelho e desliga o sync em vez de reenviar.
-  const dups=todos.filter(([,v])=>v.duplicata), p=todos.filter(([,v])=>!v.duplicata);
-  if(p.length===0&&dups.length===0){showToast('Nenhum processo marcado para SPAEI.','info');return;}
-  showToast(`Sincronizando ${p.length} processo(s)...`,'info');
-  for(const [id,dados] of p){
-    await syncProcessoSPAEI(id,dados);
-  }
-  for(const [id] of dups){
-    await db.ref().update({
-      [`sei-digital/processos/${id}/spaeiSync`]:false,
-      [`sei-digital/processos/${id}/spaeiSyncAt`]:null,
-      [`spaei-digital/sei-processos/${id}`]:null
-    });
-  }
-  showToast(`${p.length} processo(s) sincronizado(s) com SPAEI DIGITAL!`+(dups.length?` ${dups.length} duplicata(s) retirada(s) do SPAEI.`:''),'success');
+  const total=Object.values(STATE.processos).filter(v=>v&&v.spaeiSync).length;
+  if(!total&&!Object.keys(STATE.espelho||{}).length){showToast('Nenhum processo marcado para SPAEI.','info');return;}
+  showToast(`Sincronizando ${total} processo(s)...`,'info');
+  try{
+    // Reenvio total (forcar) — mas movimentação mais nova do SPAEI é recuperada, não apagada.
+    const plano=planejarReconciliacao(STATE.processos,STATE.espelho||{},{forcar:true});
+    await aplicarPlano(plano);
+    showToast(`${plano.escrever.length} processo(s) sincronizado(s) com SPAEI DIGITAL!`+(plano.remover.length?` ${plano.remover.length} espelho(s) obsoleto(s) retirado(s).`:'')+(plano.adotar.length?` ${plano.adotar.length} movimentação(ões) recuperada(s) do SPAEI.`:''),'success');
+  }catch(e){ showToast('Erro ao sincronizar: '+e.message,'error'); console.error(e); }
 }
 
 async function clearSPAEISync(){
